@@ -265,7 +265,7 @@ export function PromptBar(): React.JSX.Element {
                 onClick={submit}
                 disabled={!canSend}
                 title={turning ? "Steer (Enter)" : "Send (Enter)"}
-                className="flex size-6 items-center justify-center rounded bg-accent text-fg transition-colors hover:bg-accent-hover disabled:bg-surface-active disabled:text-fg-subtle"
+                className="flex size-6 items-center justify-center rounded bg-accent text-fg-inverse transition-colors hover:bg-accent-hover disabled:bg-surface-active disabled:text-fg-subtle"
               >
                 <ArrowUp size={12} />
               </button>

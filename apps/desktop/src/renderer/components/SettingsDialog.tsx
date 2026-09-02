@@ -90,7 +90,9 @@ export function SettingsDialog(): React.JSX.Element {
           className="animate-fade-in fixed top-1/2 left-1/2 z-50 flex h-[min(38rem,86vh)] w-[min(52rem,92vw)] -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-lg border border-line-strong bg-surface-overlay shadow-2xl shadow-black/50 outline-none"
         >
           <nav className="flex w-44 shrink-0 flex-col gap-0.5 border-r border-line bg-surface p-2">
-            <Dialog.Title className="px-2 py-1.5 text-xs font-medium text-fg">Settings</Dialog.Title>
+            <Dialog.Title className="px-2 py-1.5 text-xs font-medium text-fg">
+              Settings
+            </Dialog.Title>
             {SECTIONS.map((entry) => (
               <button
                 key={entry.id}
@@ -137,7 +139,7 @@ export function SettingsDialog(): React.JSX.Element {
 const BUTTON =
   "flex items-center gap-1.5 rounded border border-line-strong bg-surface px-2 py-1 text-2xs text-fg-muted transition-colors hover:border-line-strong hover:bg-surface-hover hover:text-fg disabled:opacity-50";
 const PRIMARY =
-  "flex items-center gap-1.5 rounded bg-accent px-2.5 py-1 text-2xs text-fg transition-colors hover:bg-accent-hover disabled:opacity-50";
+  "flex items-center gap-1.5 rounded bg-accent px-2.5 py-1 text-2xs text-fg-inverse transition-colors hover:bg-accent-hover disabled:opacity-50";
 const INPUT =
   "selectable min-w-0 rounded border border-line-strong bg-surface px-2 py-1 font-mono text-2xs text-fg outline-none focus:border-accent placeholder:text-fg-subtle";
 
@@ -345,7 +347,10 @@ function AccountSection(): React.JSX.Element {
     return (
       <>
         <Group title="Signed in">
-          <Row label={account.displayName ?? account.email} hint={account.displayName === undefined ? undefined : account.email}>
+          <Row
+            label={account.displayName ?? account.email}
+            hint={account.displayName === undefined ? undefined : account.email}
+          >
             <span className="rounded border border-line-strong px-1.5 py-0.5 text-2xs text-fg-muted">
               {PLAN_LABEL[account.plan]}
             </span>
@@ -434,8 +439,8 @@ function AccountSection(): React.JSX.Element {
           {auth.status === "error" ? "Try again" : "Sign in"}
         </button>
         <p className="mt-2 text-2xs text-fg-subtle">
-          Opens your browser. Trace never sees your password, and the token it gets back is
-          stored in your operating system&rsquo;s keychain.
+          Opens your browser. Trace never sees your password, and the token it gets back is stored
+          in your operating system&rsquo;s keychain.
         </p>
       </Group>
 
@@ -495,7 +500,9 @@ function ModelsSection(): React.JSX.Element {
         hint="Used for every new turn. The picker in the prompt bar changes the same setting."
       >
         {groups.length === 0 ? (
-          <p className="text-2xs text-fg-subtle">The engine has not reported a model catalog yet.</p>
+          <p className="text-2xs text-fg-subtle">
+            The engine has not reported a model catalog yet.
+          </p>
         ) : (
           groups.map((group) => (
             <div key={group.provider} className="mb-3 last:mb-0">
@@ -634,10 +641,13 @@ function KeyRow(props: { provider: string; status?: ProviderKeyStatus }): React.
 
   if (configured && !editing) {
     return (
-      <Row label={label} hint={props.status?.validated === false ? "This key was rejected by the provider." : undefined}>
-        <span className="font-mono text-2xs text-fg-subtle">
-          ••••{props.status?.hint ?? ""}
-        </span>
+      <Row
+        label={label}
+        hint={
+          props.status?.validated === false ? "This key was rejected by the provider." : undefined
+        }
+      >
+        <span className="font-mono text-2xs text-fg-subtle">••••{props.status?.hint ?? ""}</span>
         <button
           type="button"
           className={BUTTON}
@@ -701,7 +711,12 @@ function KeyRow(props: { provider: string; status?: ProviderKeyStatus }): React.
       >
         {revealed ? <EyeOff size={11} /> : <Eye size={11} />}
       </button>
-      <button type="button" className={PRIMARY} onClick={save} disabled={busy || value.trim() === ""}>
+      <button
+        type="button"
+        className={PRIMARY}
+        onClick={save}
+        disabled={busy || value.trim() === ""}
+      >
         {busy ? <LoaderCircle size={11} className="animate-spin" /> : null}
         Save
       </button>
@@ -784,7 +799,9 @@ function PermissionsSection(): React.JSX.Element {
                 key={`${rule.tool}:${rule.pattern ?? ""}:${rule.action}:${String(index)}`}
                 className="flex items-center gap-2 border-b border-line py-1 last:border-b-0"
               >
-                <span className={cn("w-12 shrink-0 text-2xs font-medium", ACTION_TINT[rule.action])}>
+                <span
+                  className={cn("w-12 shrink-0 text-2xs font-medium", ACTION_TINT[rule.action])}
+                >
                   {rule.action}
                 </span>
                 <span className="w-32 shrink-0 truncate font-mono text-2xs text-fg-muted">
@@ -816,9 +833,9 @@ function PermissionsSection(): React.JSX.Element {
         />
 
         <p className="mt-3 text-2xs leading-relaxed text-fg-subtle">
-          A handful of commands are refused no matter what these rules say — deleting the
-          filesystem root or your home directory, and rewriting Git history. Those are not
-          configurable, in any mode.
+          A handful of commands are refused no matter what these rules say — deleting the filesystem
+          root or your home directory, and rewriting Git history. Those are not configurable, in any
+          mode.
         </p>
       </Group>
     </>

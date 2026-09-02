@@ -7,19 +7,66 @@
  *
  * ## Why these colours
  *
- * Dark-first, near-black rather than blue-grey. An agent app is looked at for eight
- * hours at a stretch beside a real editor, and a tinted chrome fights whatever theme
- * the user chose there. The neutrals are deliberately close together — the interface
- * is mostly text, and contrast is spent on the text, not on the panels behind it.
+ * Warm ink on neutral chrome, with a cold accent. Three decisions:
  *
- * Accent is a single hue. Cursor, Linear, and Claude Code all resist the temptation to
- * colour-code every affordance, and the reason is legibility: when only the thing that
- * needs attention is coloured, colour means something.
+ * The chrome is neutral and only faintly warm — two to four points of red over blue,
+ * which at these luminances the eye reads as "black" rather than as a colour. The
+ * previous ramp lifted *blue* by twice that, and at this darkness a blue lift is a
+ * violet cast: nothing on screen read as neutral, and the violet accent sitting on
+ * violet-grey panels had no hue left to stand out with.
  *
- * ## Why `light-dark()` is not used
+ * The text is warm grey, and that is the one place the warmth is meant to be visible.
+ * This app is a wall of prose and code read for hours at a stretch; warm ink on a cool
+ * panel is where books and every decent reader app ended up.
  *
- * The theme switches on the `.dark` class on `<html>`, not on `prefers-color-scheme`,
- * because the app has its own setting that must be able to disagree with the OS.
+ * The accent is cyan — as far from the chrome's temperature as it is from every semantic
+ * colour, so a filled accent cannot be misread as a warning and a warning cannot be
+ * misread as a link. It stays a single hue for the usual reason: when only the thing
+ * that needs attention is coloured, colour means something.
+ *
+ * ## The contrast the tokens are pinned to
+ *
+ * Every pairing the components actually use was measured against the *lightest* surface
+ * it can land on — a dialog or a tool card, not the window — because two of the old
+ * pairings failed and neither failure was visible by inspection:
+ *
+ * | Pairing                            | Was    | Now    |
+ * |------------------------------------|--------|--------|
+ * | `fg-subtle` on `surface-overlay`   | 2.9:1  | 4.6:1  |
+ * | `fg-muted` on `surface-overlay`    | 6.2:1  | 7.0:1  |
+ * | `line` on `surface-raised`         | 1.2:1  | 1.4:1  |
+ * | text on a filled `accent`          | 4.6:1  | 7.0:1  |
+ * | `accent-fg` on `surface-overlay`   | 8.3:1  | 9.5:1  |
+ *
+ * `fg-subtle` is the one that mattered. It carries every timestamp, token count,
+ * placeholder, and collapsed tool-call summary — most of the transcript's secondary
+ * text — and at 2.9:1 on 11px type it was well under AA. `line` at 1.2:1 was a divider
+ * you could not see; 1.4:1 is where GitHub's dark border sits, and a hairline is judged
+ * against that norm rather than against the 3:1 bar meant for controls.
+ *
+ * The accent fill carries *dark* text rather than light, which is the one inversion here
+ * worth explaining. A cyan bright enough to read as the primary action is too bright to
+ * hold near-white type above 4.5:1; keeping `fg` on top forces the fill so dark that the
+ * hover step stops being visible. Inverting removes the ceiling — fill and hover clear
+ * 7:1 and 8:1 — and `fg-inverse`, declared since the first commit and used by nothing,
+ * becomes the token it always claimed to be.
+ *
+ * The semantic three and the diff pair are GitHub's dark values. Code blocks render with
+ * `github-dark-default`, so borrowing that theme's green, yellow, and red means a diff, a
+ * failed command, and a highlighted keyword agree on what red is instead of shipping
+ * three of them.
+ *
+ * `scripts/contrast.mjs` recomputes every ratio above from this file and fails `pnpm test`
+ * if one slips, so the table is a report rather than a promise.
+ *
+ * ## One theme, and what a second one would cost
+ *
+ * There is only a dark set, and these tokens are unconditional — `index.html` already
+ * carries `class="dark"` on `<html>`, permanently. Adding a light set therefore means
+ * moving this block under `.dark` and putting the light values in `:root`, not inventing
+ * a mechanism. The class is the switch rather than `prefers-color-scheme` because the app
+ * owns a setting that has to be able to disagree with the OS, which is also why
+ * `light-dark()` is no use here.
  *
  * Copyright (c) 2026 Origin AI
  */
@@ -27,41 +74,46 @@
 @import "tailwindcss";
 
 @theme {
-  /* --- surfaces, back to front ------------------------------------------- */
-  --color-surface: #0b0b0d; /* window background; matches main's `backgroundColor` */
-  --color-surface-raised: #131316; /* sidebar, title bar */
-  --color-surface-overlay: #1a1a1f; /* dialogs, popovers, tool cards */
-  --color-surface-hover: #212127;
-  --color-surface-active: #2a2a32;
+  /* --- surfaces, back to front ------------------------------------------- *
+   * Neutral, warming by a couple of points as they lighten. `surface` is duplicated in
+   * `main/window.ts` as the window's own `backgroundColor`, so the first paint before
+   * the renderer loads is not a white flash — change the two together.               */
+  --color-surface: #0c0c0b; /* window background */
+  --color-surface-raised: #161615; /* sidebar, title bar */
+  --color-surface-overlay: #1f1f1d; /* dialogs, popovers, tool cards */
+  --color-surface-hover: #2a2a27;
+  --color-surface-active: #35352f;
 
   /* --- lines -------------------------------------------------------------- */
-  --color-line: #24242b; /* default divider */
-  --color-line-strong: #34343d; /* focused input, dragged splitter */
+  --color-line: #33332f; /* default divider — 1.4:1, the dark-UI norm */
+  --color-line-strong: #55554d; /* focused input, dragged splitter — 2.6:1 */
 
-  /* --- text --------------------------------------------------------------- */
-  --color-fg: #ededf0;
-  --color-fg-muted: #9a9aa5; /* labels, timestamps, secondary lines */
-  --color-fg-subtle: #64646f; /* placeholders, disabled */
-  --color-fg-inverse: #0b0b0d; /* on an accent fill */
+  /* --- text --------------------------------------------------------------- *
+   * Each ratio is against the *lightest* surface the token can land on, which is
+   * `surface-overlay` — a dialog or a tool card, not the window.                     */
+  --color-fg: #f2f0ec; /* 14.5:1 */
+  --color-fg-muted: #ada9a0; /* labels, timestamps, secondary lines — 7.0:1 */
+  --color-fg-subtle: #8b8780; /* placeholders, disabled — 4.6:1, so AA at 11px */
+  --color-fg-inverse: #0c0c0b; /* on an accent fill — 7.0:1 */
 
   /* --- accent ------------------------------------------------------------- */
-  --color-accent: #6e56cf;
-  --color-accent-hover: #7c66d9;
-  --color-accent-muted: #2a2340; /* tinted fill behind accent text */
-  --color-accent-fg: #b9a9f5; /* accent-coloured text on a dark surface */
+  --color-accent: #1fa8c9; /* filled, with `fg-inverse` on top */
+  --color-accent-hover: #34b6d4;
+  --color-accent-muted: #10262e; /* tinted fill behind accent text */
+  --color-accent-fg: #5fd3ef; /* accent-coloured text, and the focus ring — 9.5:1 */
 
   /* --- semantic ----------------------------------------------------------- */
-  --color-success: #46a758;
-  --color-success-muted: #1b2a1e;
-  --color-warning: #ffb224;
-  --color-warning-muted: #2e2005;
-  --color-danger: #e5484d;
-  --color-danger-muted: #341316;
+  --color-success: #3fb950;
+  --color-success-muted: #14261a;
+  --color-warning: #e3b341;
+  --color-warning-muted: #2c2410;
+  --color-danger: #f85149;
+  --color-danger-muted: #2e1517;
 
   /* --- diffs -------------------------------------------------------------- */
-  --color-diff-add: #1e3226;
+  --color-diff-add: #12261c;
   --color-diff-add-fg: #7ee2a0;
-  --color-diff-remove: #3a1d21;
+  --color-diff-remove: #33161a;
   --color-diff-remove-fg: #ff9592;
 
   /* --- type --------------------------------------------------------------- *
@@ -69,11 +121,10 @@
    * macOS. A bundled webfont would make Trace look like a web page in a frame, which
    * is exactly the impression an Electron app has to fight.                        */
   --font-sans:
-    ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial,
-    sans-serif;
+    ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --font-mono:
-    ui-monospace, "SF Mono", "Cascadia Mono", "Segoe UI Mono", Menlo, Consolas,
-    "Liberation Mono", monospace;
+    ui-monospace, "SF Mono", "Cascadia Mono", "Segoe UI Mono", Menlo, Consolas, "Liberation Mono",
+    monospace;
 
   --text-2xs: 0.6875rem; /* 11px — timestamps, token counts */
   --text-2xs--line-height: 1rem;
@@ -149,9 +200,13 @@
   }
 
   /* Every native focus ring, replaced once. Removing them without a replacement is
-     the single most common accessibility regression in a dark-themed app. */
+     the single most common accessibility regression in a dark-themed app.
+
+     Drawn in `accent-fg` rather than `accent` because the ring has to survive landing on
+     an accent fill: a ring in `accent` around the send button would be the same colour as
+     the button. The bright tint is 9:1 or better on every surface the app has. */
   :focus-visible {
-    outline: 2px solid var(--color-accent);
+    outline: 2px solid var(--color-accent-fg);
     outline-offset: 1px;
     border-radius: 2px;
   }

@@ -31,7 +31,7 @@ const MIN_WIDTH = 720;
 const MIN_HEIGHT = 480;
 
 /** Matches the renderer's `--color-surface`. Prevents a white flash before first paint. */
-const BACKGROUND = "#0b0b0d";
+const BACKGROUND = "#0c0c0b";
 
 export interface WindowHostOptions {
   state: StateStore;

@@ -153,11 +153,15 @@ async function ensure(cols: number, rows: number): Promise<Live> {
  * The palette, read from the design tokens where they exist.
  *
  * `@theme` in `index.css` emits plain hex into `:root`, which is the reason it is plain hex
- * — xterm parses colour strings itself and has never heard of `oklch()`. Six of the sixteen
- * ANSI slots already have a token and are read from it, so a change to the app's red
- * changes the terminal's red. The other ten do not exist as tokens because nothing else in
- * the UI has an opinion about ANSI cyan, and inventing tokens for them would put ten
- * unused variables in the stylesheet.
+ * — xterm parses colour strings itself and has never heard of `oklch()`. Eight of the
+ * sixteen ANSI slots already have a token and are read from it, so a change to the app's
+ * red changes the terminal's red. The other eight are literals from GitHub's dark palette,
+ * the same family `github-dark-default` colours code blocks with, so a hex printed by a
+ * command and a hex in a diff are the same hex.
+ *
+ * The one slot that must *not* follow the accent is magenta. `accent-fg` is a cyan, so the
+ * accent feeds ANSI cyan; wiring it to magenta instead — as this did while the accent was
+ * violet — would make every `\e[35m` in a build log come out the wrong colour.
  */
 function themeOf(): ITheme {
   const css = getComputedStyle(document.documentElement);
@@ -165,30 +169,30 @@ function themeOf(): ITheme {
     const value = css.getPropertyValue(name).trim();
     return value === "" ? fallback : value;
   };
-  const fg = read("--color-fg", "#ededf0");
-  const bg = read("--color-surface", "#0b0b0d");
+  const fg = read("--color-fg", "#f2f0ec");
+  const bg = read("--color-surface", "#0c0c0b");
   return {
     background: bg,
     foreground: fg,
-    cursor: read("--color-accent-fg", "#b9a9f5"),
+    cursor: read("--color-accent-fg", "#5fd3ef"),
     cursorAccent: bg,
-    selectionBackground: read("--color-surface-active", "#2a2a32"),
-    // Not `#000`: on a #0b0b0d surface, ANSI black is a hole in the output.
-    black: "#3b3b45",
-    red: read("--color-danger", "#e5484d"),
-    green: read("--color-success", "#46a758"),
-    yellow: read("--color-warning", "#ffb224"),
-    blue: "#5b9dff",
-    magenta: read("--color-accent-fg", "#b9a9f5"),
-    cyan: "#4cc3d4",
+    selectionBackground: read("--color-surface-active", "#35352f"),
+    // Not `#000`: on a #0c0c0b surface, ANSI black is a hole in the output.
+    black: "#3f3f39",
+    red: read("--color-danger", "#f85149"),
+    green: read("--color-success", "#3fb950"),
+    yellow: read("--color-warning", "#e3b341"),
+    blue: "#58a6ff",
+    magenta: "#bc8cff",
+    cyan: read("--color-accent-fg", "#5fd3ef"),
     white: fg,
-    brightBlack: read("--color-fg-subtle", "#64646f"),
+    brightBlack: read("--color-fg-subtle", "#85817a"),
     brightRed: read("--color-diff-remove-fg", "#ff9592"),
     brightGreen: read("--color-diff-add-fg", "#7ee2a0"),
-    brightYellow: "#ffd074",
-    brightBlue: "#8ebeff",
-    brightMagenta: "#d3c6ff",
-    brightCyan: "#86e0eb",
+    brightYellow: "#f2cc60",
+    brightBlue: "#79c0ff",
+    brightMagenta: "#d2a8ff",
+    brightCyan: "#a5e9f7",
     brightWhite: "#ffffff",
   };
 }
@@ -432,12 +436,7 @@ export function TerminalPanel(): React.JSX.Element {
           <span className="min-w-0 flex-1 text-2xs text-fg-muted">
             {`The shell ${describe(exit)}. Its output is still above.`}
           </span>
-          <button
-            type="button"
-            className={PANEL_BUTTON}
-            disabled={busy}
-            onClick={restart}
-          >
+          <button type="button" className={PANEL_BUTTON} disabled={busy} onClick={restart}>
             New terminal
           </button>
         </div>
@@ -465,4 +464,3 @@ export function TerminalPanel(): React.JSX.Element {
     </div>
   );
 }
-

@@ -19,7 +19,13 @@
  */
 
 import { memo, useState } from "react";
-import { ChevronDown, ChevronRight, FilePen, ShieldQuestionMark, SquareTerminal } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronRight,
+  FilePen,
+  ShieldQuestionMark,
+  SquareTerminal,
+} from "lucide-react";
 
 import type { PermissionDecision, PermissionRequest } from "@trace/protocol";
 
@@ -60,7 +66,10 @@ export const PermissionPrompt = memo(function PermissionPrompt(props: {
         <Icon size={13} className="mt-0.5 shrink-0 text-warning" />
         <div className="min-w-0 flex-1">
           <p className="selectable text-xs font-medium text-fg">{request.summary}</p>
-          <p className="selectable mt-0.5 truncate font-mono text-2xs text-fg-muted" title={request.subject}>
+          <p
+            className="selectable mt-0.5 truncate font-mono text-2xs text-fg-muted"
+            title={request.subject}
+          >
             {request.subject}
           </p>
         </div>
@@ -145,7 +154,7 @@ function Action(props: {
       className={cn(
         "rounded border px-2 py-1 text-2xs font-medium transition-colors disabled:opacity-50",
         props.primary === true
-          ? "border-accent bg-accent text-fg hover:bg-accent-hover"
+          ? "border-accent bg-accent text-fg-inverse hover:bg-accent-hover"
           : "border-line-strong bg-surface-raised text-fg-muted hover:bg-surface-hover hover:text-fg",
       )}
     >
