@@ -375,6 +375,17 @@ export async function describeCall<K extends ToolName>(
       return { subject: ".", summary: `Search the codebase for "${oneLine(c.query, 80)}"` };
     }
 
+    case "fetch_rules": {
+      const f = input as ToolInputMap["fetch_rules"];
+      // A named subject rather than a path: rules live outside the workspace roots
+      // (a user-global one is under `~/.trace`), so the file-path branch below would
+      // reject a legitimate read as an escape attempt.
+      return {
+        subject: "rules",
+        summary: `Read project rules: ${oneLine(f.rule_names.join(", "), 80)}`,
+      };
+    }
+
     default:
       return describeFileCall(tool, input, roots);
   }

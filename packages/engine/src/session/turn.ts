@@ -22,6 +22,7 @@
  */
 
 import { open } from "node:fs/promises";
+import path from "node:path";
 import type { MessageParam } from "@anthropic-ai/sdk/resources/messages";
 import {
   TOOL_EFFECTS,
@@ -44,14 +45,37 @@ import {
 import type { Logger } from "../logger.js";
 import { addUsage, emptyUsage, estimateUsd, resolveModel } from "../models.js";
 import { resolveInWorkspace, toPosix } from "../paths.js";
-import { describeCall, evaluate, ruleForAlwaysAllow, type CallDescription } from "../permissions.js";
+import {
+  describeCall,
+  evaluate,
+  ruleForAlwaysAllow,
+  type CallDescription,
+} from "../permissions.js";
 import type { AnthropicProvider, AssistantToolCall } from "../providers/anthropic.js";
+import {
+  buildRuleSet,
+  EMPTY_RULE_SET,
+  matchAutoRules,
+  type Rule,
+  type RuleSet,
+  type RulesLoader,
+  type RuleTarget,
+} from "../rules.js";
 import type { SettingsStore } from "../settings.js";
 import { runTool, toolsForRequest } from "../tools/index.js";
 import type { FileStateTracker } from "../file-state.js";
 import type { ToolContext, ToolResult } from "../tools/registry.js";
 import type { Workspace, WorkspaceRegistry } from "../workspace.js";
-import { asSystemReminder, buildSystemPrompt, renderAttachment, todayStamp, turnReminders } from "./prompt.js";
+import {
+  asSystemReminder,
+  buildSystemPrompt,
+  renderAttachment,
+  renderRule,
+  todayStamp,
+  turnReminders,
+  type PromptRule,
+  type PromptRules,
+} from "./prompt.js";
 
 /** Cap on a single inlined @-mention. Past this, tell the model to read it properly. */
 const MAX_ATTACHMENT_CHARS = 100_000;
@@ -83,6 +107,20 @@ export interface TurnDeps {
   /** Session-lived todo list. `todo_write` mutates it; the loop only reads it. */
   todos: { get(): TodoItem[]; set(next: TodoItem[]): void };
   checkpoints: CheckpointWriter | null;
+  /**
+   * Re-read per turn, so editing a rule file takes effect on the next message rather
+   * than on the next restart. A rule tree is a handful of small files; the read costs
+   * less than the request it precedes.
+   */
+  rules: RulesLoader;
+  /**
+   * Names of auto-attached rules already delivered in this session.
+   *
+   * Session-scoped and mutated here, because the dedupe has to outlive a turn: the
+   * agent will touch a `.tsx` file on nearly every turn of a frontend task, and
+   * re-sending the same rule each time is a slow leak of context and money.
+   */
+  attachedRules: Set<string>;
   /**
    * Persisted conversation, in API shape. Appended to in place, so the session's
    * next turn continues from exactly what the model last saw.
@@ -119,6 +157,14 @@ export class Turn {
   private checkpointAttempted = false;
   /** Set by a `deny_and_abort` decision. Stops the loop without cancelling the turn. */
   private aborted = false;
+  /**
+   * This turn's rules, loaded once in `run`.
+   *
+   * Held on the instance because three consumers need the same snapshot — the system
+   * prompt, the tool list, and `fetch_rules` — and re-loading for each would let a
+   * mid-turn file edit make the prompt and the tool disagree about what a name means.
+   */
+  private ruleSet: RuleSet = EMPTY_RULE_SET;
   private readonly log: Logger;
 
   constructor(
@@ -152,16 +198,22 @@ export class Turn {
 
     let stopReason: StopReason = "error";
     try {
+      // Before the user message, because auto-attached rules ride along inside it.
+      this.ruleSet = buildRuleSet(await this.loadRules());
+
       this.deps.history.push(await this.buildUserMessage(this.permissions()));
 
+      const hasSemanticIndex = this.deps.workspace?.indexStatus === "ready";
       const system = buildSystemPrompt({
         roots: this.roots(),
         isGitRepo: this.deps.workspace?.isGitRepo ?? false,
-        hasSemanticIndex: this.deps.workspace?.indexStatus === "ready",
+        hasSemanticIndex,
         today: todayStamp(new Date()),
+        rules: this.promptRules(),
       });
       const tools = toolsForRequest({
-        hasSemanticIndex: this.deps.workspace?.indexStatus === "ready",
+        hasSemanticIndex,
+        hasRules: this.ruleSet.fetchable.length > 0,
       });
 
       stopReason = await this.loop({ model, system, tools, settings });
@@ -608,6 +660,13 @@ export class Turn {
       if (block) blocks.push(block);
     }
 
+    // After the attachments, because reading one is what records the path a rule
+    // matches against — an @-mentioned `.tsx` file should pull in the `.tsx` rule on
+    // the same turn, not the next one.
+    for (const reminder of this.autoRuleReminders()) {
+      blocks.push({ type: "text", text: asSystemReminder(reminder) });
+    }
+
     const text = this.params.text.trim();
     blocks.push({
       type: "text",
@@ -723,6 +782,98 @@ export class Turn {
     return [own, ...all.filter((root) => root !== own)];
   }
 
+  // -----------------------------------------------------------------------
+  // Rules
+  // -----------------------------------------------------------------------
+
+  /**
+   * Load the rule set, or none at all.
+   *
+   * A rules directory that cannot be read must not take the turn down with it. The
+   * user asked a question; answering it without their conventions is a worse answer,
+   * not a failed one, and the log line is where that gets diagnosed.
+   */
+  private async loadRules(): Promise<Rule[]> {
+    try {
+      return await this.deps.rules();
+    } catch (cause) {
+      this.log.warn("Could not load project rules; continuing without them", cause);
+      return [];
+    }
+  }
+
+  /** The rule material for the system prompt: full bodies, plus an index of the rest. */
+  private promptRules(): PromptRules {
+    return {
+      applied: this.ruleSet.applied.map((rule) => this.toPromptRule(rule)),
+      fetchable: this.ruleSet.fetchable.map((rule) => ({
+        name: rule.name,
+        description: rule.description,
+        globs: rule.globs,
+      })),
+      omitted: this.ruleSet.omitted,
+    };
+  }
+
+  private toPromptRule(rule: Rule): PromptRule {
+    // Only worth saying which repository a rule came from when there is more than one;
+    // with a single root every rule would carry the same value.
+    const scope =
+      this.roots().length > 1 ? this.deps.workspaces.find(rule.workspaceId)?.name : undefined;
+    return {
+      name: rule.name,
+      source: rule.source,
+      body: rule.body,
+      ...(scope === undefined ? {} : { scope }),
+    };
+  }
+
+  /**
+   * Auto-attached rules that fire for the files in play, as system reminders.
+   *
+   * Delivered in the user turn rather than the system prompt because which rules match
+   * changes as the work moves through the codebase, and a system prompt that changes
+   * mid-conversation costs a full cache write. Each rule is sent at most once per
+   * session: the model does not forget an instruction between turns, and a rule
+   * re-attached on every turn of a long frontend task would be paid for every time.
+   */
+  private autoRuleReminders(): string[] {
+    if (this.ruleSet.all.length === 0) return [];
+
+    const matched = matchAutoRules(this.ruleSet.all, this.ruleTargets());
+    const fresh = matched.filter((rule) => !this.deps.attachedRules.has(rule.name));
+    if (fresh.length === 0) return [];
+
+    for (const rule of fresh) this.deps.attachedRules.add(rule.name);
+    this.log.debug("Attached rules by glob", { rules: fresh.map((rule) => rule.name) });
+
+    return fresh.map(
+      (rule) =>
+        `A project rule applies to the files in play. Follow it for the rest of this conversation.\n\n${renderRule(this.toPromptRule(rule))}`,
+    );
+  }
+
+  /**
+   * The files an auto-attached rule is matched against.
+   *
+   * Read from the file tracker rather than from this turn's attachments, so a rule
+   * fires for a file the *agent* opened as well as one the user @-mentioned — which is
+   * the common case, since the agent finds most of the files it edits. Selections are
+   * not represented yet; they will be once the editor panel produces them.
+   */
+  private ruleTargets(): RuleTarget[] {
+    return this.deps.files.touched().map((absolute) => {
+      const workspace = this.deps.workspaces.owning(absolute);
+      return {
+        relative:
+          workspace === undefined
+            ? path.basename(absolute)
+            : toPosix(path.relative(workspace.root, absolute)),
+        workspaceId: workspace?.id ?? null,
+      };
+    });
+  }
+
   private toolContext(callId: string): ToolContext {
     return {
       sessionId: this.deps.sessionId,
@@ -737,6 +888,7 @@ export class Turn {
       emit: (event) => this.emit(event),
       files: this.deps.files,
       todos: this.deps.todos,
+      rules: this.ruleSet,
     };
   }
 
@@ -829,7 +981,11 @@ type UserContentBlock =
   | { type: "text"; text: string }
   | {
       type: "image";
-      source: { type: "base64"; media_type: "image/jpeg" | "image/png" | "image/gif" | "image/webp"; data: string };
+      source: {
+        type: "base64";
+        media_type: "image/jpeg" | "image/png" | "image/gif" | "image/webp";
+        data: string;
+      };
     };
 
 const SUPPORTED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/gif", "image/webp"] as const;

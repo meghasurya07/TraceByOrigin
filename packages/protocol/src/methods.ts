@@ -13,12 +13,7 @@
  */
 
 import type { SessionEvent, TurnCost, WorkPanelTarget } from "./events.js";
-import type {
-  PermissionDecision,
-  PermissionSettings,
-  TodoItem,
-  ToolName,
-} from "./tools.js";
+import type { PermissionDecision, PermissionSettings, TodoItem, ToolName } from "./tools.js";
 
 // ---------------------------------------------------------------------------
 // Handshake
@@ -294,6 +289,53 @@ export interface PromptCommand {
 }
 
 // ---------------------------------------------------------------------------
+// Rules
+// ---------------------------------------------------------------------------
+
+/**
+ * How a rule earns its way into a request.
+ *
+ * Derived by the engine from the file's frontmatter rather than declared, so a rule cannot
+ * claim an activation its fields do not support. A surface displays this; it does not
+ * compute it.
+ *
+ * - `always` — in the system prompt on every turn.
+ * - `auto` — added when a file matching its globs enters the turn.
+ * - `agent` — advertised by name and description; the model fetches it if relevant.
+ * - `manual` — inert until something names it.
+ */
+export type RuleActivation = "always" | "auto" | "agent" | "manual";
+
+/**
+ * A standing instruction the agent is given before the user says anything.
+ *
+ * `source` distinguishes the three places one can come from: `user` is `~/.trace/rules`,
+ * `workspace` is `.trace/rules` in a repository, and `agents` is a repository's
+ * `AGENTS.md` — kept separate because it is the one file the user did not put in a Trace
+ * directory, and a surface offering "delete this rule" should say so differently.
+ *
+ * `body` travels with the summary for the same reason `PromptCommand.body` does: these are
+ * a handful of kilobytes, and the surface that lists them is the surface that wants to
+ * show one.
+ */
+export interface RuleSummary {
+  /** `testing`, or `review:security` for `.trace/rules/review/security.md`. */
+  name: string;
+  /** From frontmatter, or the first non-empty line of the body. */
+  description: string;
+  activation: RuleActivation;
+  source: "user" | "workspace" | "agents";
+  /** From frontmatter `globs`. Empty unless `activation` is `auto`. */
+  globs: string[];
+  /** Absolute path, so a surface can offer "edit this rule". */
+  path: string;
+  /** `null` for a user-global rule. */
+  workspaceId: string | null;
+  /** The instruction text, frontmatter removed. */
+  body: string;
+}
+
+// ---------------------------------------------------------------------------
 // The maps
 // ---------------------------------------------------------------------------
 
@@ -393,6 +435,15 @@ export interface RequestMap {
 
   /** File-backed slash commands, re-scanned on each call so an edit shows up at once. */
   "commands/list": { params: { workspaceId?: string }; result: { commands: PromptCommand[] } };
+
+  /**
+   * Rules currently in effect, re-scanned on each call.
+   *
+   * Read-only on purpose. A rule is a file the user owns, so editing one is the file
+   * editor's job, not a protocol method's — and a surface that could write rules would
+   * have to decide what to do about the ones it did not create.
+   */
+  "rules/list": { params: { workspaceId?: string }; result: { rules: RuleSummary[] } };
 }
 
 export type RequestMethod = keyof RequestMap;

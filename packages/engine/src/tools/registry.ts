@@ -9,7 +9,8 @@
  * and $0.60 per turn.
  *
  * The one sanctioned variation is `codebase_search`, which is omitted until a
- * semantic index exists. That flips once per workspace, not once per turn.
+ * semantic index exists, and `fetch_rules`, which is omitted until the workspace has
+ * rules worth fetching. Each flips once per workspace, not once per turn.
  *
  * Copyright (c) 2026 Origin AI
  */
@@ -17,6 +18,7 @@
 import type { SessionEvent, TodoItem, ToolInputMap, ToolName } from "@trace/protocol";
 import type { FileStateTracker } from "../file-state.js";
 import type { Logger } from "../logger.js";
+import type { RuleSet } from "../rules.js";
 import type { SettingsStore } from "../settings.js";
 import type { Workspace, WorkspaceRegistry } from "../workspace.js";
 
@@ -80,6 +82,14 @@ export interface ToolContext {
   readonly files: FileStateTracker;
   /** Live todo list for this session, owned by the turn and mutated by `todo_write`. */
   readonly todos: { get(): TodoItem[]; set(next: TodoItem[]): void };
+  /**
+   * The rule set this turn was assembled with.
+   *
+   * A snapshot, not a loader: `fetch_rules` must hand back the same text the prompt's
+   * rule index advertised, and a mid-turn edit to a rule file changing what a name
+   * resolves to would make the model's own citation wrong.
+   */
+  readonly rules: RuleSet;
 }
 
 export type ToolHandler<K extends ToolName> = (
@@ -187,7 +197,8 @@ const grep: ToolDefinition = {
       include: { type: "string", description: 'Glob filter on filenames, e.g. "*.ts".' },
       case_sensitive: {
         type: "boolean",
-        description: "Default false (smart-case: case-insensitive unless the pattern has uppercase).",
+        description:
+          "Default false (smart-case: case-insensitive unless the pattern has uppercase).",
       },
     },
     required: ["pattern"],
@@ -243,7 +254,10 @@ const editFile: ToolDefinition = {
       path: { type: "string", description: "Workspace-relative path." },
       old_string: { type: "string", description: "Exact text to replace." },
       new_string: { type: "string", description: "Replacement text." },
-      replace_all: { type: "boolean", description: "Replace every occurrence instead of requiring uniqueness." },
+      replace_all: {
+        type: "boolean",
+        description: "Replace every occurrence instead of requiring uniqueness.",
+      },
     },
     required: ["path", "old_string", "new_string"],
   },
@@ -272,11 +286,18 @@ const runTerminalCmd: ToolDefinition = {
     type: "object",
     properties: {
       command: { type: "string", description: "The command to run." },
-      cwd: { type: "string", description: "Workspace-relative working directory. Defaults to the root." },
-      timeout_ms: { type: "integer", description: "Kill after this many ms. Default 120000, max 600000." },
+      cwd: {
+        type: "string",
+        description: "Workspace-relative working directory. Defaults to the root.",
+      },
+      timeout_ms: {
+        type: "integer",
+        description: "Kill after this many ms. Default 120000, max 600000.",
+      },
       is_read_only: {
         type: "boolean",
-        description: "Set true when the command only inspects state. Advisory — it does not bypass the permission gate.",
+        description:
+          "Set true when the command only inspects state. Advisory — it does not bypass the permission gate.",
       },
     },
     required: ["command"],
@@ -313,6 +334,27 @@ const todoWrite: ToolDefinition = {
   },
 };
 
+const fetchRules: ToolDefinition = {
+  name: "fetch_rules",
+  description:
+    "Retrieve the full text of project rules listed by name in the system prompt's rule index. " +
+    "Fetch a rule when its description suggests it governs what you are about to do — conventions, " +
+    "review criteria, deployment steps — and do it before writing code rather than after. " +
+    "Rules already included in the system prompt are not listed and cannot be fetched.",
+  input_schema: {
+    type: "object",
+    properties: {
+      rule_names: {
+        type: "array",
+        items: { type: "string" },
+        description:
+          'Rule names exactly as listed in the index, e.g. ["testing", "review:security"].',
+      },
+    },
+    required: ["rule_names"],
+  },
+};
+
 /**
  * The full set, in a fixed order. Order is part of the cache key, so this array is
  * append-only in practice: reordering it invalidates every cached prefix in flight.
@@ -328,6 +370,7 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = Object.freeze([
   deleteFile,
   runTerminalCmd,
   todoWrite,
+  fetchRules,
 ]);
 
 const DEFINITIONS_BY_NAME = new Map(TOOL_DEFINITIONS.map((d) => [d.name, d]));
@@ -340,9 +383,17 @@ export function toolDefinition(name: ToolName): ToolDefinition | undefined {
  * The `tools` array for a request.
  *
  * Filtering happens here and nowhere else, so there is exactly one place to audit
- * when a cache hit rate looks wrong.
+ * when a cache hit rate looks wrong. Both flags describe a workspace's capabilities
+ * rather than a turn's, which is what makes them safe to vary: they settle early and
+ * then hold for the life of the session.
  */
-export function toolsForRequest(options: { hasSemanticIndex: boolean }): ToolDefinition[] {
-  if (options.hasSemanticIndex) return [...TOOL_DEFINITIONS];
-  return TOOL_DEFINITIONS.filter((d) => d.name !== "codebase_search");
+export function toolsForRequest(options: {
+  hasSemanticIndex: boolean;
+  hasRules: boolean;
+}): ToolDefinition[] {
+  return TOOL_DEFINITIONS.filter((definition) => {
+    if (definition.name === "codebase_search") return options.hasSemanticIndex;
+    if (definition.name === "fetch_rules") return options.hasRules;
+    return true;
+  });
 }

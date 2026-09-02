@@ -35,6 +35,7 @@ import {
   Hourglass,
   ListTodo,
   LoaderCircle,
+  Scroll,
   Search,
   SearchCode,
   ShieldQuestionMark,
@@ -62,6 +63,7 @@ const TOOL_ICON: Readonly<Record<ToolName, typeof FileSearch>> = {
   delete_file: FileX,
   run_terminal_cmd: SquareTerminal,
   todo_write: ListTodo,
+  fetch_rules: Scroll,
 };
 
 /** Shown when `summary` is still empty, i.e. the input is mid-stream. */
@@ -76,6 +78,7 @@ const TOOL_VERB: Readonly<Record<ToolName, string>> = {
   delete_file: "Deleting",
   run_terminal_cmd: "Running a command",
   todo_write: "Updating the plan",
+  fetch_rules: "Reading project rules",
 };
 
 /** Terminal-state accent for the icon and the left edge. */

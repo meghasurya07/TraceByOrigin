@@ -27,6 +27,7 @@
 import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import type { PromptCommand } from "@trace/protocol";
+import { splitFrontmatter } from "./frontmatter.js";
 import { Logger } from "./logger.js";
 import { toPosix } from "./paths.js";
 import type { Workspace } from "./workspace.js";
@@ -151,7 +152,9 @@ async function readCommand(
   }
 
   const { meta, body } = splitFrontmatter(raw);
-  const hint = meta.get("argument-hint") ?? meta.get("argumentHint");
+  // One lookup, not two: `frontmatter.ts` folds case and separators, so `argument-hint`
+  // and `argumentHint` arrive at the same key.
+  const hint = meta.get("argumentHint");
   return {
     name,
     description: meta.get("description") ?? deriveDescription(body),
@@ -180,39 +183,6 @@ function commandName(baseDir: string, absolute: string): string | null {
     return null;
   }
   return name;
-}
-
-/**
- * Split leading `---` frontmatter off the body.
- *
- * Deliberately not YAML. Commands need two scalar keys, and pulling in a parser would mean
- * a command file could fail to load because of an indentation mistake in a block it does
- * not use. `key: value` lines, quotes stripped, everything else ignored.
- */
-function splitFrontmatter(raw: string): { meta: Map<string, string>; body: string } {
-  const meta = new Map<string, string>();
-  // A BOM before the opening `---` would hide the delimiter, and editors do write them.
-  const text = raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw;
-
-  const match = /^---[ \t]*\r?\n([\s\S]*?)\r?\n?---[ \t]*(?:\r?\n|$)/.exec(text);
-  if (match === null) return { meta, body: text.trim() };
-
-  for (const line of (match[1] ?? "").split(/\r?\n/)) {
-    const colon = line.indexOf(":");
-    if (colon <= 0) continue;
-    const key = line.slice(0, colon).trim();
-    const value = unquote(line.slice(colon + 1).trim());
-    if (key !== "" && value !== "") meta.set(key, value);
-  }
-  return { meta, body: text.slice(match[0].length).trim() };
-}
-
-function unquote(value: string): string {
-  const first = value[0];
-  if (value.length >= 2 && (first === '"' || first === "'") && value.endsWith(first)) {
-    return value.slice(1, -1);
-  }
-  return value;
 }
 
 /** First meaningful line, heading markers stripped. Used when frontmatter declares none. */

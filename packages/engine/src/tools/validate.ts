@@ -71,10 +71,18 @@ const schemas = {
       }),
     ),
   }),
+  fetch_rules: z.object({
+    // `min(1)` on the array, because fetching nothing is a wasted round trip the
+    // model should be told about rather than an empty success it may not notice.
+    rule_names: z.array(z.string().min(1)).min(1, "name at least one rule"),
+  }),
 } satisfies { [K in ToolName]: z.ZodType };
 
 export class ToolInputError extends Error {
-  constructor(readonly tool: ToolName, message: string) {
+  constructor(
+    readonly tool: ToolName,
+    message: string,
+  ) {
     super(message);
     this.name = "ToolInputError";
   }

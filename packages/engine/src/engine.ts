@@ -61,6 +61,7 @@ import { Logger } from "./logger.js";
 import { MODELS, resolveModel } from "./models.js";
 import { looksBinary, resolveInWorkspace } from "./paths.js";
 import { AnthropicProvider } from "./providers/anthropic.js";
+import { discoverRules } from "./rules.js";
 import { Session } from "./session/session.js";
 import { SessionStore, newSessionMeta } from "./session/store.js";
 import { KNOWN_PROVIDERS, SettingsStore, traceHome } from "./settings.js";
@@ -145,7 +146,10 @@ export class Engine {
     this.settings = new SettingsStore(this.home);
     this.store = new SessionStore(this.home);
     this.files = new FileSearch(this.workspaces);
-    this.provider = new AnthropicProvider(() => this.settings.getKey("anthropic"), log.child("anthropic"));
+    this.provider = new AnthropicProvider(
+      () => this.settings.getKey("anthropic"),
+      log.child("anthropic"),
+    );
     this.terminals = new TerminalManager({
       onOutput: (terminalId, data) => this.peer.notify("terminal/output", { terminalId, data }),
       onExit: (terminalId, exitCode, signal) =>
@@ -375,11 +379,9 @@ export class Engine {
 
         const buffer = await readFile(resolved.absolute);
         if (looksBinary(buffer)) {
-          throw new RpcError(
-            ErrorCode.InvalidParams,
-            `"${resolved.relative}" is a binary file.`,
-            { sizeBytes: info.size },
-          );
+          throw new RpcError(ErrorCode.InvalidParams, `"${resolved.relative}" is a binary file.`, {
+            sizeBytes: info.size,
+          });
         }
 
         const content = buffer.toString("utf8");
@@ -565,6 +567,24 @@ export class Engine {
               : [this.workspaces.get(params.workspaceId)],
           home: this.home,
         }).then((commands) => ({ commands })),
+
+      // ---- rules ----
+
+      "rules/list": (params) =>
+        this.loadRules(params.workspaceId).then((rules) => ({
+          rules: rules.map((rule) => ({
+            name: rule.name,
+            description: rule.description,
+            activation: rule.activation,
+            source: rule.source,
+            // Copied because the protocol type is mutable and the rule's is readonly;
+            // handing the client an alias of engine state is how it ends up mutated.
+            globs: [...rule.globs],
+            path: rule.path,
+            workspaceId: rule.workspaceId,
+            body: rule.body,
+          })),
+        })),
     };
 
     // `handleAll` accepts a `Partial`, so the completeness guarantee comes from the
@@ -629,12 +649,32 @@ export class Engine {
             create: (label: string) => manager.create({ sessionId, turnId, label }),
           })
         : null,
+      // Scoped to the session's own workspace, not every open root: a session works in
+      // one repository, and a multi-root window should not apply the other project's
+      // conventions to it. Null workspace still gets user-global rules, which is right —
+      // "always use conventional commits" does not need a repository to be true.
+      rules: () => this.loadRules(workspace?.id),
       emit: (event: SessionEvent) => this.peer.notify("session/event", event),
       // Rules-only adjudication for a client that cannot show a dialog: prompting one
       // would hang the turn on a question nobody can see.
       canPrompt: this.client?.capabilities.permissionPrompts ?? false,
       log: log.child(`session:${sessionId.slice(0, 8)}`),
     };
+  }
+
+  /**
+   * Discover rules, for a single workspace or for all of them.
+   *
+   * Shared by `rules/list` and by every session's loader so the settings surface and the
+   * agent cannot disagree about what is in effect — the first thing a user does when a
+   * rule appears not to work is open that list and check.
+   */
+  private loadRules(workspaceId: string | undefined) {
+    return discoverRules({
+      workspaces:
+        workspaceId === undefined ? this.workspaces.list() : [this.workspaces.get(workspaceId)],
+      home: this.home,
+    });
   }
 
   private async createSession(params: {
@@ -702,7 +742,13 @@ export class Engine {
     }
     const workspace = this.workspaces.find(loaded.meta.workspaceId) ?? null;
     const deps = await this.depsFor(loaded.meta.id, workspace);
-    const session = Session.restore(deps, loaded.meta, workspace, loaded.history, loaded.transcript);
+    const session = Session.restore(
+      deps,
+      loaded.meta,
+      workspace,
+      loaded.history,
+      loaded.transcript,
+    );
     this.live.set(sessionId, session);
     log.debug(`Restored session ${sessionId.slice(0, 8)} from disk`, {
       entries: loaded.transcript.length,
@@ -751,11 +797,17 @@ export class Engine {
       // The title is matched first and without reading the transcript: it is the thing
       // the user is most likely to be searching for, and it is already in hand.
       if (meta.title.toLowerCase().includes(needle)) {
-        hits.push({ sessionId: meta.id, title: meta.title, snippet: meta.title, at: meta.updatedAt });
+        hits.push({
+          sessionId: meta.id,
+          title: meta.title,
+          snippet: meta.title,
+          at: meta.updatedAt,
+        });
         continue;
       }
 
-      const transcript = this.live.get(meta.id)?.entries() ?? (await this.store.readTranscript(meta.id));
+      const transcript =
+        this.live.get(meta.id)?.entries() ?? (await this.store.readTranscript(meta.id));
       for (const entry of transcript) {
         const text = searchableText(entry);
         const at = text.toLowerCase().indexOf(needle);
@@ -946,9 +998,13 @@ function snippetAround(text: string, at: number, length: number): string {
 function sanitizeSettings(patch: Partial<EngineSettings>): Partial<EngineSettings> {
   const clean: Partial<EngineSettings> = {};
 
-  if (typeof patch.defaultModel === "string") clean.defaultModel = resolveModel(patch.defaultModel).id;
+  if (typeof patch.defaultModel === "string")
+    clean.defaultModel = resolveModel(patch.defaultModel).id;
 
-  if (typeof patch.maxIterationsPerTurn === "number" && Number.isFinite(patch.maxIterationsPerTurn)) {
+  if (
+    typeof patch.maxIterationsPerTurn === "number" &&
+    Number.isFinite(patch.maxIterationsPerTurn)
+  ) {
     clean.maxIterationsPerTurn = Math.max(1, Math.min(500, Math.floor(patch.maxIterationsPerTurn)));
   }
   if (typeof patch.effort === "string" && (EFFORTS as readonly string[]).includes(patch.effort)) {
@@ -977,7 +1033,9 @@ const ACTIONS = ["allow", "deny", "ask"] as const;
  * whatever survives this, so a malformed rule cannot widen anything — but a *dropped*
  * deny rule would narrow the user's own protections without saying so.
  */
-function sanitizePermissions(value: PermissionSettings | undefined): PermissionSettings | undefined {
+function sanitizePermissions(
+  value: PermissionSettings | undefined,
+): PermissionSettings | undefined {
   if (value === undefined || typeof value !== "object") return undefined;
   if (!(MODES as readonly string[]).includes(value.mode)) return undefined;
   if (!Array.isArray(value.rules)) return undefined;

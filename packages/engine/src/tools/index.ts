@@ -19,6 +19,7 @@ import {
   writeFileTool,
 } from "./fs-tools.js";
 import type { ToolContext, ToolHandlerMap, ToolResult } from "./registry.js";
+import { fetchRulesTool } from "./rules-tool.js";
 import { codebaseSearchTool, globTool, grepTool } from "./search-tools.js";
 import { runTerminalCmdTool } from "./terminal-tool.js";
 import { todoWriteTool } from "./todo-tool.js";
@@ -35,6 +36,7 @@ export const TOOL_HANDLERS: ToolHandlerMap = {
   delete_file: deleteFileTool,
   run_terminal_cmd: runTerminalCmdTool,
   todo_write: todoWriteTool,
+  fetch_rules: fetchRulesTool,
 };
 
 /**

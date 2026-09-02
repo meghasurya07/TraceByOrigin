@@ -34,6 +34,55 @@ export interface PromptEnvironment {
    * function of its input — that is what makes it testable and replayable.
    */
   today: string;
+  /** Project rules. Omit for none; see `PromptRules`. */
+  rules?: PromptRules;
+}
+
+/**
+ * The rule material the prompt carries.
+ *
+ * Structural, and deliberately not `rules.ts`'s own types: this module is a pure
+ * function from plain data to a string, and importing the discovery layer would let a
+ * field that has nothing to do with the prompt — a file path, a workspace id — start
+ * influencing bytes inside the cached prefix.
+ */
+export interface PromptRules {
+  /** Included in full, in prompt order. Broadest scope first; later text weighs more. */
+  applied: readonly PromptRule[];
+  /** Advertised by name so the model can call `fetch_rules`. */
+  fetchable: readonly RuleIndexEntry[];
+  /** Always-applied rules the budget dropped. Named, because silence reads as a bug. */
+  omitted: readonly string[];
+}
+
+export interface PromptRule {
+  name: string;
+  source: "user" | "workspace" | "agents";
+  body: string;
+  /**
+   * Which workspace it came from, for a multi-root session.
+   *
+   * Set only when the session has more than one root: with one root it is noise, and
+   * every rule would carry the same value. Two repositories can both ship an
+   * `AGENTS.md`, and without this the prompt would show two identical tags.
+   */
+  scope?: string;
+  /**
+   * The globs that auto-attach it, when it has any.
+   *
+   * Empty for an always-applied rule and populated when `fetch_rules` renders an
+   * auto-attached one, so the model can see the rule will also arrive on its own the
+   * next time it touches a matching file.
+   */
+  globs?: string;
+}
+
+/** One line of the index: enough for the model to decide whether it needs the rule. */
+export interface RuleIndexEntry {
+  name: string;
+  description: string;
+  /** Non-empty only for auto-attached rules, so the model knows why one may appear. */
+  globs: readonly string[];
 }
 
 /**
@@ -53,6 +102,7 @@ export function buildSystemPrompt(env: PromptEnvironment): string {
     PERMISSIONS,
     COMMUNICATION,
     FINISHING,
+    rulesSection(env.rules),
   ]
     .filter((section) => section !== "")
     .join("\n\n");
@@ -216,6 +266,90 @@ in the manifest for them.
 Then stop. Don't loop looking for more to do, and don't ask "would you like me to \
 also…" as a way of continuing. If something is genuinely left over, name it in one \
 line and let the user decide.`;
+
+// ---------------------------------------------------------------------------
+// Project rules
+// ---------------------------------------------------------------------------
+
+/**
+ * Where a rule came from, in words the model can weigh.
+ *
+ * The model has to resolve conflicts between rules, and it cannot do that from an
+ * opaque enum. "The user, globally" versus "this project" is the whole basis for
+ * deciding which of two contradictory instructions is more specific.
+ */
+const RULE_ORIGIN: Record<PromptRule["source"], string> = {
+  user: "user",
+  workspace: "project",
+  agents: "project/AGENTS.md",
+};
+
+/**
+ * Rules, last in the prompt.
+ *
+ * Position is deliberate. Everything above is Trace's own instruction, and a project's
+ * conventions are meant to override it — later text carries more weight, so a rule
+ * saying "always use tabs" should not be arguing uphill against a general section it
+ * appears before. It also means the rule text is the last thing before the
+ * conversation, which is where an instruction is most likely to be followed.
+ */
+function rulesSection(rules: PromptRules | undefined): string {
+  if (rules === undefined) return "";
+  const { applied, fetchable, omitted } = rules;
+  if (applied.length === 0 && fetchable.length === 0 && omitted.length === 0) return "";
+
+  const parts: string[] = [
+    `# Project rules
+
+Standing instructions from this project and from the user's own configuration. They \
+outrank the guidance above: where a rule and a general instruction disagree, follow the \
+rule. Where two rules disagree, the narrower scope wins — a project rule over a user \
+rule, a rule about one directory over one about the repository.`,
+  ];
+
+  if (applied.length > 0) {
+    parts.push(applied.map(renderRule).join("\n\n"));
+  }
+
+  if (fetchable.length > 0) {
+    const index = fetchable.map((entry) => {
+      const globs = entry.globs.length > 0 ? ` — attaches to ${entry.globs.join(", ")}` : "";
+      const description = entry.description === "" ? "" : ` — ${entry.description}`;
+      return `- \`${entry.name}\`${description}${globs}`;
+    });
+    parts.push(
+      `The rules below are not included above. Read one with \`fetch_rules\` when its \
+description covers what you are about to do, and read it *before* you start — a \
+convention discovered afterwards means doing the work twice.
+
+${index.join("\n")}`,
+    );
+  }
+
+  if (omitted.length > 0) {
+    parts.push(
+      `These are always-applied rules that did not fit the prompt's rule budget: \
+${omitted.join(", ")}. Fetch them at the start of the turn; the user intended them to \
+apply to everything.`,
+    );
+  }
+
+  return parts.join("\n\n");
+}
+
+/**
+ * One rule as an XML-ish block.
+ *
+ * Tagged rather than run together as prose because the model must be able to tell where
+ * the user's instruction ends and Trace's resumes. Exported so `fetch_rules` renders a
+ * rule through this same function — a rule should read identically whether it arrived in
+ * the prompt or through a tool call, and two renderers would eventually drift.
+ */
+export function renderRule(rule: PromptRule): string {
+  const scope = rule.scope === undefined ? "" : ` scope="${rule.scope}"`;
+  const globs = rule.globs === undefined ? "" : ` globs="${rule.globs}"`;
+  return `<rule name="${rule.name}" from="${RULE_ORIGIN[rule.source]}"${scope}${globs}>\n${rule.body}\n</rule>`;
+}
 
 // ---------------------------------------------------------------------------
 // The user turn

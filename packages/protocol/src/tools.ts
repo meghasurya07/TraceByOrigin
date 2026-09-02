@@ -17,13 +17,20 @@
  */
 
 /**
- * v1 tool set. Intentionally small: these ten cover essentially everything a
- * coding agent does, and each one added past this point is a permanent tax on
- * every request's cached prefix.
+ * v1 tool set. Intentionally small: these cover essentially everything a coding
+ * agent does, and each one added past this point is a permanent tax on every
+ * request's cached prefix.
  *
- * `codebase_search` is declared here but gated behind the semantic index landing —
- * the engine omits it from `tools` until an index exists for the workspace, which
- * is the one sanctioned cache-prefix variation (it changes once, at index-ready).
+ * **Order is part of the cache key.** The engine serialises `TOOL_DEFINITIONS` in
+ * this order, so a new tool goes on the end — reordering this array invalidates the
+ * cached prefix of every existing session at once.
+ *
+ * Two entries are conditionally omitted rather than always sent, which is the only
+ * sanctioned cache-prefix variation because each flips once and then stays put:
+ * `codebase_search` until a semantic index exists for the workspace, and
+ * `fetch_rules` until the workspace actually has fetchable rules. A tool that can
+ * only answer "there are none" is worse than an absent one — the model spends a
+ * round trip discovering it.
  */
 export const TOOL_NAMES = [
   "read_file",
@@ -36,6 +43,7 @@ export const TOOL_NAMES = [
   "delete_file",
   "run_terminal_cmd",
   "todo_write",
+  "fetch_rules",
 ] as const;
 
 export type ToolName = (typeof TOOL_NAMES)[number];
@@ -69,6 +77,9 @@ export const TOOL_EFFECTS: Readonly<Record<ToolName, ToolEffect>> = {
   delete_file: "mutate",
   run_terminal_cmd: "execute",
   todo_write: "meta",
+  // `read`, not `meta`: a rule is a file on disk, and the read is subject to the
+  // same containment and permission rules as any other.
+  fetch_rules: "read",
 };
 
 // ---------------------------------------------------------------------------
@@ -152,6 +163,18 @@ export interface TodoWriteInput {
   todos: TodoItem[];
 }
 
+/**
+ * Pull the full text of one or more rules the model was shown only by name.
+ *
+ * Plural because the index the model reads lists every fetchable rule at once, and a
+ * task that needs the testing rule usually needs the conventions rule too — one call
+ * beats three round trips through a 200-turn conversation.
+ */
+export interface FetchRulesInput {
+  /** Names as they appear in the prompt's rule index, e.g. `review:security`. */
+  rule_names: string[];
+}
+
 /** Maps each tool name to its input type, for exhaustive typed dispatch. */
 export interface ToolInputMap {
   read_file: ReadFileInput;
@@ -164,6 +187,7 @@ export interface ToolInputMap {
   delete_file: DeleteFileInput;
   run_terminal_cmd: RunTerminalCmdInput;
   todo_write: TodoWriteInput;
+  fetch_rules: FetchRulesInput;
 }
 
 // ---------------------------------------------------------------------------

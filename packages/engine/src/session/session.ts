@@ -37,6 +37,7 @@ import {
 import { FileStateTracker } from "../file-state.js";
 import type { Logger } from "../logger.js";
 import type { AnthropicProvider } from "../providers/anthropic.js";
+import type { RulesLoader } from "../rules.js";
 import type { SettingsStore } from "../settings.js";
 import type { Workspace, WorkspaceRegistry } from "../workspace.js";
 import { addCost, titleFromPrompt, DEFAULT_SESSION_TITLE, type SessionStore } from "./store.js";
@@ -58,6 +59,14 @@ export interface SessionDeps {
    * shadow repo is created by Trace, so any folder can be checkpointed.
    */
   checkpoints: ((turnId: string) => CheckpointWriter) | null;
+  /**
+   * Reads the rules visible to this session, fresh on every turn.
+   *
+   * A loader rather than a snapshot because rules are files the user edits while the
+   * session is open, and the alternative — caching them at session start — produces the
+   * bug where someone fixes a rule, sends another message, and sees the old behaviour.
+   */
+  rules: RulesLoader;
   /** Fan events out to every subscribed client. */
   emit(event: SessionEvent): void;
   /** False for clients that cannot render a permission dialog. */
@@ -77,6 +86,14 @@ export class Session {
   private readonly builder: TranscriptBuilder;
   private readonly pending = new Map<string, Deferred>();
   private readonly steerQueue: string[] = [];
+  /**
+   * Auto-attached rules already delivered, by name.
+   *
+   * Session-scoped rather than turn-scoped, because the dedupe is only worth anything
+   * across turns: the agent touches the same kinds of file on nearly every turn of a
+   * task, and re-sending the rule each time pays for the same instruction repeatedly.
+   */
+  private readonly attachedRules = new Set<string>();
   private todos: TodoItem[] = [];
   private activeTurn: Turn | null = null;
   /** The in-flight turn's promise, so `close` can wait for its last write. */
@@ -213,6 +230,8 @@ export class Session {
           },
         },
         checkpoints: this.deps.checkpoints?.(turnId) ?? null,
+        rules: this.deps.rules,
+        attachedRules: this.attachedRules,
         history: this.history,
         emit: (event) => this.observe(event),
         requestPermission: (request) => this.awaitDecision(request.callId),

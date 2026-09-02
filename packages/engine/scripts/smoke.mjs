@@ -23,7 +23,12 @@ import {
   RateLimitError,
 } from "@anthropic-ai/sdk";
 
-import { DEFAULT_PERMISSION_SETTINGS, ErrorCode, PROTOCOL_VERSION, RpcPeer } from "../../protocol/dist/index.js";
+import {
+  DEFAULT_PERMISSION_SETTINGS,
+  ErrorCode,
+  PROTOCOL_VERSION,
+  RpcPeer,
+} from "../../protocol/dist/index.js";
 import { countLines } from "../dist/diff.js";
 import { Engine } from "../dist/engine.js";
 import { FileStateTracker } from "../dist/file-state.js";
@@ -35,8 +40,18 @@ import { DEFAULT_MODEL, UTILITY_MODEL, resolveModel } from "../dist/models.js";
 import { describeCall, evaluate, ruleForAlwaysAllow } from "../dist/permissions.js";
 import { buildRequest, classify } from "../dist/providers/anthropic.js";
 import {
+  EMPTY_RULE_SET,
+  buildRuleSet,
+  discoverRules,
+  fetchableRules,
+  findRule,
+  matchAutoRules,
+  selectAlwaysApplied,
+} from "../dist/rules.js";
+import {
   asSystemReminder,
   buildSystemPrompt,
+  renderRule,
   todayStamp,
   turnReminders,
 } from "../dist/session/prompt.js";
@@ -103,18 +118,39 @@ async function main() {
         todoState.items = next;
       },
     },
+    rules: EMPTY_RULE_SET,
   };
 
   const run = (tool, input) => runTool(tool, input, ctx);
 
   // -- registry ------------------------------------------------------------
   console.log("\nregistry");
-  const withIndex = toolsForRequest({ hasSemanticIndex: true });
-  const withoutIndex = toolsForRequest({ hasSemanticIndex: false });
-  check("all 10 tools with an index", withIndex.length === 10, `got ${withIndex.length}`);
+  const everything = toolsForRequest({ hasSemanticIndex: true, hasRules: true });
+  const withIndex = toolsForRequest({ hasSemanticIndex: true, hasRules: false });
+  const withRules = toolsForRequest({ hasSemanticIndex: false, hasRules: true });
+  const neither = toolsForRequest({ hasSemanticIndex: false, hasRules: false });
+  check(
+    "all 11 tools when both are available",
+    everything.length === 11,
+    `got ${everything.length}`,
+  );
   check(
     "codebase_search omitted without an index",
-    withoutIndex.length === 9 && !withoutIndex.some((t) => t.name === "codebase_search"),
+    withRules.length === 10 && !withRules.some((t) => t.name === "codebase_search"),
+  );
+  check(
+    "fetch_rules omitted without rules",
+    withIndex.length === 10 && !withIndex.some((t) => t.name === "fetch_rules"),
+  );
+  check("both omitted together", neither.length === 9, `got ${neither.length}`);
+  // Order is part of the cache key, so filtering must never reorder what survives.
+  check(
+    "filtering preserves definition order",
+    neither.map((t) => t.name).join() ===
+      everything
+        .filter((t) => t.name !== "codebase_search" && t.name !== "fetch_rules")
+        .map((t) => t.name)
+        .join(),
   );
 
   // -- workspace -----------------------------------------------------------
@@ -186,7 +222,10 @@ async function main() {
   // -- read_file -----------------------------------------------------------
   console.log("\nread_file");
   const readWhole = await run("read_file", { path: "packages/engine/src/paths.ts" });
-  check("reads with line numbers", /^\s*1\tw?/.test(readWhole.content.split("\n")[0]) || readWhole.content.includes("1\t/**"));
+  check(
+    "reads with line numbers",
+    /^\s*1\tw?/.test(readWhole.content.split("\n")[0]) || readWhole.content.includes("1\t/**"),
+  );
   check("reports total lines", (readWhole.meta?.totalLines ?? 0) > 100, readWhole.summary);
   const readRange = await run("read_file", {
     path: "packages/engine/src/paths.ts",
@@ -238,13 +277,18 @@ async function main() {
   check("blocks overwrite without a read", blind.isError === true, blind.content.slice(0, 80));
   check(
     "does not clobber the file it blocked",
-    (await readFile(path.join(scratchDir, "foreign.txt"), "utf8")) === "written by another editor\n",
+    (await readFile(path.join(scratchDir, "foreign.txt"), "utf8")) ===
+      "written by another editor\n",
   );
   const selfOverwrite = await runScratch("write_file", {
     path: "src/greet.ts",
     content: "export function greet(name: string) {\n  return `hi, ${name}`;\n}\n",
   });
-  check("allows rewriting a file it just wrote", selfOverwrite.isError !== true, selfOverwrite.content);
+  check(
+    "allows rewriting a file it just wrote",
+    selfOverwrite.isError !== true,
+    selfOverwrite.content,
+  );
 
   await runScratch("read_file", { path: "src/greet.ts" });
   const overwrite = await runScratch("write_file", {
@@ -273,7 +317,11 @@ async function main() {
     old_string: "        return `hey ${name}`;",
     new_string: "x",
   });
-  check("diagnoses a whitespace near-miss", /whitespace|indentation/i.test(noMatch.content), noMatch.content.slice(0, 120));
+  check(
+    "diagnoses a whitespace near-miss",
+    /whitespace|indentation/i.test(noMatch.content),
+    noMatch.content.slice(0, 120),
+  );
 
   // CRLF preservation — the edit failure mode that only shows up on Windows.
   await runScratch("write_file", { path: "crlf.txt", content: "alpha\r\nbeta\r\ngamma\r\n" });
@@ -285,7 +333,11 @@ async function main() {
   });
   check("matches LF old_string against a CRLF file", crlfEdit.isError !== true, crlfEdit.content);
   const crlfAfter = await readFile(path.join(scratchDir, "crlf.txt"), "utf8");
-  check("preserves CRLF endings", crlfAfter === "alpha\r\nBETA\r\ngamma\r\n", JSON.stringify(crlfAfter));
+  check(
+    "preserves CRLF endings",
+    crlfAfter === "alpha\r\nBETA\r\ngamma\r\n",
+    JSON.stringify(crlfAfter),
+  );
 
   const numbered = await runScratch("edit_file", {
     path: "crlf.txt",
@@ -405,18 +457,32 @@ async function main() {
   );
 
   // Mode defaults.
-  check("auto_edit writes without asking", act("write_file", "a.ts", "auto_edit").action === "allow");
-  check("auto_edit still asks before a shell", act("run_terminal_cmd", "pnpm test", "auto_edit").action === "ask");
+  check(
+    "auto_edit writes without asking",
+    act("write_file", "a.ts", "auto_edit").action === "allow",
+  );
+  check(
+    "auto_edit still asks before a shell",
+    act("run_terminal_cmd", "pnpm test", "auto_edit").action === "ask",
+  );
   check("ask mode asks before writing", act("write_file", "a.ts", "ask").action === "ask");
   check("yolo runs anything else", act("run_terminal_cmd", "pnpm test", "yolo").action === "allow");
 
   // Secrets: readable only on purpose.
   check("reading .env asks first", act("read_file", ".env", "auto_edit").action === "ask");
-  check("reading a nested .env asks first", act("read_file", "apps/web/.env.local", "auto_edit").action === "ask");
-  check("reading ordinary source does not ask", act("read_file", "src/app.ts", "auto_edit").action === "allow");
-  check("an explicit allow rule unlocks a secret", act("read_file", ".env", "auto_edit", [
-    { tool: "read_file", pattern: ".env", action: "allow" },
-  ]).action === "allow");
+  check(
+    "reading a nested .env asks first",
+    act("read_file", "apps/web/.env.local", "auto_edit").action === "ask",
+  );
+  check(
+    "reading ordinary source does not ask",
+    act("read_file", "src/app.ts", "auto_edit").action === "allow",
+  );
+  check(
+    "an explicit allow rule unlocks a secret",
+    act("read_file", ".env", "auto_edit", [{ tool: "read_file", pattern: ".env", action: "allow" }])
+      .action === "allow",
+  );
   check("yolo reads secrets", act("read_file", ".env", "yolo").action === "allow");
 
   // Shipped defaults behave.
@@ -465,15 +531,27 @@ async function main() {
     cmdDesc.subject === "pnpm  test   --watch",
     JSON.stringify(cmdDesc.subject),
   );
-  check("command summary collapses whitespace", cmdDesc.summary === "Run `pnpm test --watch`", cmdDesc.summary);
+  check(
+    "command summary collapses whitespace",
+    cmdDesc.summary === "Run `pnpm test --watch`",
+    cmdDesc.summary,
+  );
 
   const createDesc = await describeCall(
     "write_file",
     { path: "new/file.ts", content: "const a = 1;\nconst b = 2;\n" },
     scratchRoots,
   );
-  check("create is summarised as a create", createDesc.summary === "Create new/file.ts (2 lines)", createDesc.summary);
-  check("create shows added lines", createDesc.diffPreview?.includes("+const a = 1;") === true, createDesc.diffPreview);
+  check(
+    "create is summarised as a create",
+    createDesc.summary === "Create new/file.ts (2 lines)",
+    createDesc.summary,
+  );
+  check(
+    "create shows added lines",
+    createDesc.diffPreview?.includes("+const a = 1;") === true,
+    createDesc.diffPreview,
+  );
 
   await writeFile(path.join(scratchDir, "existing.ts"), "one\ntwo\nthree\n", "utf8");
   const overwriteDesc = await describeCall(
@@ -481,7 +559,11 @@ async function main() {
     { path: "existing.ts", content: "one\nTWO\nthree\n" },
     scratchRoots,
   );
-  check("overwrite is summarised as an overwrite", overwriteDesc.summary === "Overwrite existing.ts", overwriteDesc.summary);
+  check(
+    "overwrite is summarised as an overwrite",
+    overwriteDesc.summary === "Overwrite existing.ts",
+    overwriteDesc.summary,
+  );
   check(
     "overwrite diffs against what is on disk",
     overwriteDesc.diffPreview?.includes("-two") === true &&
@@ -494,10 +576,22 @@ async function main() {
     { path: "existing.ts", old_string: "two", new_string: "TWO", replace_all: true },
     scratchRoots,
   );
-  check("edit summary notes replace_all", editDesc.summary === "Edit existing.ts (all occurrences)", editDesc.summary);
-  check("edit previews old → new", editDesc.diffPreview?.includes("+TWO") === true, editDesc.diffPreview);
+  check(
+    "edit summary notes replace_all",
+    editDesc.summary === "Edit existing.ts (all occurrences)",
+    editDesc.summary,
+  );
+  check(
+    "edit previews old → new",
+    editDesc.diffPreview?.includes("+TWO") === true,
+    editDesc.diffPreview,
+  );
 
-  const escapedDesc = await describeCall("write_file", { path: "../escape.ts", content: "" }, scratchRoots);
+  const escapedDesc = await describeCall(
+    "write_file",
+    { path: "../escape.ts", content: "" },
+    scratchRoots,
+  );
   check(
     "an unresolvable path is flagged rather than prompted",
     typeof escapedDesc.unresolvedReason === "string",
@@ -526,12 +620,20 @@ async function main() {
     events.some((e) => e.type === "tool_call_output_delta" && e.chunk.includes("trace-smoke-ok")),
   );
   const failed = await runScratch("run_terminal_cmd", { command: "exit 3" });
-  check("surfaces a non-zero exit", failed.isError === true && failed.meta?.exitCode === 3, failed.summary);
+  check(
+    "surfaces a non-zero exit",
+    failed.isError === true && failed.meta?.exitCode === 3,
+    failed.summary,
+  );
   const timedOut = await runScratch("run_terminal_cmd", {
     command: "sleep 5",
     timeout_ms: 1000,
   });
-  check("kills on timeout", timedOut.isError === true && /timeout/i.test(timedOut.content), timedOut.summary);
+  check(
+    "kills on timeout",
+    timedOut.isError === true && /timeout/i.test(timedOut.content),
+    timedOut.summary,
+  );
 
   // -- todo_write ----------------------------------------------------------
   console.log("\ntodo_write");
@@ -543,7 +645,10 @@ async function main() {
   });
   check("accepts a valid list", todos.isError !== true, todos.content);
   check("stores it in session state", todoState.items.length === 2);
-  check("emits todos_updated", events.some((e) => e.type === "todos_updated"));
+  check(
+    "emits todos_updated",
+    events.some((e) => e.type === "todos_updated"),
+  );
   const twoActive = await run("todo_write", {
     todos: [
       { id: "1", content: "a", status: "in_progress" },
@@ -573,21 +678,35 @@ async function main() {
         content: [{ type: "tool_result", tool_use_id: "call_1", content: "contents" }],
       },
     ],
-    tools: toolsForRequest({ hasSemanticIndex: false }),
+    tools: toolsForRequest({ hasSemanticIndex: false, hasRules: false }),
     settings: { effort: "xhigh", showThinking: true },
   };
   const req = buildRequest(spec);
 
   check("targets the default model", req.model === "claude-opus-5", req.model);
   check("streams", req.stream === true);
-  check("caps output below the model's max", req.max_tokens <= spec.model.maxOutputTokens, String(req.max_tokens));
+  check(
+    "caps output below the model's max",
+    req.max_tokens <= spec.model.maxOutputTokens,
+    String(req.max_tokens),
+  );
   check(
     "puts one breakpoint at the end of system",
     req.system.length === 1 && req.system[0].cache_control?.type === "ephemeral",
   );
-  check("leaves tools unmarked", req.tools.every((t) => t.cache_control === undefined));
-  check("omits codebase_search without an index", !req.tools.some((t) => t.name === "codebase_search"));
-  check("passes effort through", req.output_config?.effort === "xhigh", JSON.stringify(req.output_config));
+  check(
+    "leaves tools unmarked",
+    req.tools.every((t) => t.cache_control === undefined),
+  );
+  check(
+    "omits codebase_search without an index",
+    !req.tools.some((t) => t.name === "codebase_search"),
+  );
+  check(
+    "passes effort through",
+    req.output_config?.effort === "xhigh",
+    JSON.stringify(req.output_config),
+  );
   check("uses adaptive thinking", req.thinking?.type === "adaptive", JSON.stringify(req.thinking));
   check("never sends budget_tokens", req.thinking?.budget_tokens === undefined);
 
@@ -624,7 +743,11 @@ async function main() {
   const restampedMarks = restamped.messages.flatMap((m) =>
     typeof m.content === "string" ? [] : m.content.filter((b) => b.cache_control),
   );
-  check("strips old breakpoints before re-marking", restampedMarks.length === 2, String(restampedMarks.length));
+  check(
+    "strips old breakpoints before re-marking",
+    restampedMarks.length === 2,
+    String(restampedMarks.length),
+  );
 
   const noThinking = buildRequest({
     ...spec,
@@ -651,13 +774,15 @@ async function main() {
   );
   check(
     "a malformed request is not retried",
-    classify(new BadRequestError(400, apiBody("bad shape"), undefined, new Headers())).retryable === false,
+    classify(new BadRequestError(400, apiBody("bad shape"), undefined, new Headers())).retryable ===
+      false,
   );
   check(
     "surfaces the API's own sentence, not the JSON body",
-    classify(new BadRequestError(400, apiBody("bad shape"), undefined, new Headers())).error.message ===
-      "The Anthropic API rejected the request: bad shape",
-    classify(new BadRequestError(400, apiBody("bad shape"), undefined, new Headers())).error.message,
+    classify(new BadRequestError(400, apiBody("bad shape"), undefined, new Headers())).error
+      .message === "The Anthropic API rejected the request: bad shape",
+    classify(new BadRequestError(400, apiBody("bad shape"), undefined, new Headers())).error
+      .message,
   );
   const overflow = classify(
     new BadRequestError(
@@ -707,6 +832,14 @@ async function main() {
     "documents codebase_search once indexed",
     buildSystemPrompt({ ...promptEnv, hasSemanticIndex: true }).includes("codebase_search"),
   );
+  check("costs nothing when there are no rules", !prompt.includes("# Project rules"));
+  check(
+    "and nothing for an empty rule set either",
+    !buildSystemPrompt({
+      ...promptEnv,
+      rules: { applied: [], fetchable: [], omitted: [] },
+    }).includes("# Project rules"),
+  );
   check(
     "says so when no folder is open",
     buildSystemPrompt({ ...promptEnv, roots: [] }).includes("No workspace folder is open"),
@@ -724,7 +857,10 @@ async function main() {
     !prompt.includes("Plan mode") && !prompt.includes("YOLO"),
     "mode belongs in the user turn, not the system prompt",
   );
-  check("marks injected text", asSystemReminder("x") === "<system-reminder>\nx\n</system-reminder>");
+  check(
+    "marks injected text",
+    asSystemReminder("x") === "<system-reminder>\nx\n</system-reminder>",
+  );
   check("stamps the date as YYYY-MM-DD", /^\d{4}-\d{2}-\d{2}$/.test(todayStamp(new Date())));
 
   // -- turn loop -----------------------------------------------------------
@@ -736,6 +872,7 @@ async function main() {
   check("handles CRLF", countLines("a\r\nb\r\n") === 2);
 
   await turnSection({ workspaces, scratch, scratchDir });
+  await rulesSection();
   await gitSection();
   await engineSection();
   await processSection();
@@ -845,12 +982,21 @@ async function turnSection({ workspaces, scratch, scratchDir }) {
     return store;
   }
 
+  /**
+   * One session's worth of state, so two `drive` calls can be two turns of the same
+   * conversation. The rule dedupe is session-scoped, so proving it needs exactly that.
+   */
+  function newTurnSession() {
+    return { files: new FileStateTracker(), attachedRules: new Set(), history: [] };
+  }
+
   /** Drive one turn end to end and hand back everything worth asserting on. */
-  async function drive({ script, params, settingsPatch, decide, holder }) {
+  async function drive({ script, params, settingsPatch, decide, holder, rules, session }) {
     const store = await newSettings(settingsPatch);
     const provider = fakeProvider(script);
     const events = [];
-    const history = [];
+    const state = session ?? newTurnSession();
+    const history = state.history;
     const prompts = [];
     const todos = { items: [] };
 
@@ -862,7 +1008,7 @@ async function turnSection({ workspaces, scratch, scratchDir }) {
         workspace: scratch,
         settings: store,
         provider,
-        files: new FileStateTracker(),
+        files: state.files,
         todos: {
           get: () => todos.items,
           set: (next) => {
@@ -870,6 +1016,8 @@ async function turnSection({ workspaces, scratch, scratchDir }) {
           },
         },
         checkpoints: null,
+        rules: rules ?? (async () => []),
+        attachedRules: state.attachedRules,
         history,
         emit: (event) => events.push(event),
         requestPermission: async (request) => {
@@ -884,7 +1032,7 @@ async function turnSection({ workspaces, scratch, scratchDir }) {
     if (holder) holder.turn = turn;
 
     const stopReason = await turn.run();
-    return { stopReason, events, history, prompts, provider, settings: store };
+    return { stopReason, events, history, prompts, provider, settings: store, session: state };
   }
 
   const typeOf = (events, type) => events.filter((event) => event.type === type);
@@ -908,7 +1056,10 @@ async function turnSection({ workspaces, scratch, scratchDir }) {
 
   // -- a tool call that needs no approval
   const readOnly = await drive({
-    script: [{ text: "Looking.", toolCalls: [{ tool: "list_dir", input: { path: "." } }] }, { text: "Done." }],
+    script: [
+      { text: "Looking.", toolCalls: [{ tool: "list_dir", input: { path: "." } }] },
+      { text: "Done." },
+    ],
   });
   check("runs a read-only call and continues", readOnly.stopReason === "end_turn");
   check("history is user/assistant/results/assistant", readOnly.history.length === 4);
@@ -950,7 +1101,10 @@ async function turnSection({ workspaces, scratch, scratchDir }) {
 
   // -- a headless client cannot be asked
   const headless = await drive({
-    script: [{ toolCalls: [{ tool: "run_terminal_cmd", input: { command: "echo hi" } }] }, { text: "ok" }],
+    script: [
+      { toolCalls: [{ tool: "run_terminal_cmd", input: { command: "echo hi" } }] },
+      { text: "ok" },
+    ],
   });
   check(
     "explains itself when no prompt is possible",
@@ -1001,8 +1155,14 @@ async function turnSection({ workspaces, scratch, scratchDir }) {
   check("deny_and_abort cancels the turn", aborted.stopReason === "cancelled", aborted.stopReason);
   check("only the first call is adjudicated", aborted.prompts.length === 1);
   check("both calls are still answered", toolResults(aborted.history).length === 2);
-  check("passes the user's reason to the model", toolResults(aborted.history)[0].content.includes("not now"));
-  check("marks the skipped call as not run", toolResults(aborted.history)[1].content.includes("Not run"));
+  check(
+    "passes the user's reason to the model",
+    toolResults(aborted.history)[0].content.includes("not now"),
+  );
+  check(
+    "marks the skipped call as not run",
+    toolResults(aborted.history)[1].content.includes("Not run"),
+  );
   check("no unanswered call after an abort", unansweredToolUses(aborted.history).length === 0);
   check("still emits turn_completed", typeOf(aborted.events, "turn_completed").length === 1);
 
@@ -1043,13 +1203,19 @@ async function turnSection({ workspaces, scratch, scratchDir }) {
     ],
   });
   check("an interrupt reads as cancelled", interrupted.stopReason === "cancelled");
-  check("keeps the text the user already saw", interrupted.history[1]?.content === "Starting to look at the");
+  check(
+    "keeps the text the user already saw",
+    interrupted.history[1]?.content === "Starting to look at the",
+  );
   check(
     "tells the model it was cut off",
     interrupted.history[2]?.role === "user" &&
       interrupted.history[2].content.includes("interrupted"),
   );
-  check("emits turn_completed after an interrupt", typeOf(interrupted.events, "turn_completed").length === 1);
+  check(
+    "emits turn_completed after an interrupt",
+    typeOf(interrupted.events, "turn_completed").length === 1,
+  );
 
   // -- change rollup
   const edited = await drive({
@@ -1067,13 +1233,483 @@ async function turnSection({ workspaces, scratch, scratchDir }) {
   check("auto_edit needs no approval", edited.prompts.length === 0);
   check("rolls two writes to one file into one entry", rollup.length === 1, JSON.stringify(rollup));
   check("keeps the file as created, not modified", rollup[0]?.changeType === "created");
-  check("sums the lines across both writes", rollup[0]?.linesAdded === 4, String(rollup[0]?.linesAdded));
+  check(
+    "sums the lines across both writes",
+    rollup[0]?.linesAdded === 4,
+    String(rollup[0]?.linesAdded),
+  );
   check(
     "reports the change on the call that made it",
     typeOf(edited.events, "tool_call_completed")[0]?.changes?.length === 1,
   );
 
+  // -- an auto-attached rule rides in the user turn, once per session
+  await writeFile(path.join(scratchDir, "Widget.tsx"), "export const Widget = () => null;\n");
+  const frontendRule = {
+    name: "frontend",
+    description: "React conventions",
+    globs: ["*.tsx"],
+    activation: "auto",
+    source: "workspace",
+    path: path.join(scratchDir, ".trace", "rules", "frontend.md"),
+    workspaceId: scratch.id,
+    body: "Prefer function components.",
+  };
+  const rulesFor = async () => [frontendRule];
+  const ruleSession = newTurnSession();
+
+  const attachedTurn = await drive({
+    session: ruleSession,
+    rules: rulesFor,
+    params: { attachments: [{ type: "file", path: "Widget.tsx" }] },
+    script: [{ text: "Noted." }],
+  });
+  const firstUser = userText(attachedTurn.history[0]);
+  check(
+    "an @-mentioned .tsx attaches its rule on the same turn",
+    firstUser.includes('<rule name="frontend"') &&
+      firstUser.includes("Prefer function components."),
+  );
+  check(
+    "delivers it as a system reminder, not as the user's own words",
+    /<system-reminder>[\s\S]*<rule name="frontend"/.test(firstUser),
+  );
+  check(
+    "names the repository it came from when more than one is open",
+    firstUser.includes(`scope="${scratch.name}"`),
+    firstUser,
+  );
+  check("records it as attached for the session", ruleSession.attachedRules.has("frontend"));
+
+  const secondTurnStart = ruleSession.history.length;
+  await drive({
+    session: ruleSession,
+    rules: rulesFor,
+    params: { attachments: [{ type: "file", path: "Widget.tsx" }] },
+    script: [{ text: "Still noted." }],
+  });
+  check(
+    "does not re-send it on the next turn of the same session",
+    !userText(ruleSession.history[secondTurnStart]).includes('<rule name="frontend"'),
+  );
+
+  const unmatched = await drive({
+    rules: rulesFor,
+    params: { attachments: [{ type: "file", path: "rollup.txt" }] },
+    script: [{ text: "Nothing to attach." }],
+  });
+  check(
+    "a file the globs do not match attaches nothing",
+    !userText(unmatched.history[0]).includes('<rule name="frontend"'),
+  );
+
   await Promise.all(homes.map((home) => rm(home, { recursive: true, force: true })));
+}
+
+/** Flatten a message's content down to the text the model would read. */
+function userText(message) {
+  if (message === undefined) return "";
+  if (typeof message.content === "string") return message.content;
+  return message.content
+    .filter((block) => block.type === "text")
+    .map((block) => block.text)
+    .join("\n");
+}
+
+/**
+ * Rules: discovery, activation, glob attachment, the prompt budget, and `fetch_rules`.
+ *
+ * Against real files, because every failure mode in this layer is a property of the
+ * filesystem and of the frontmatter parser rather than of the pure functions: a
+ * hyphenated key, a `.mdc` extension, a name derived from a nested directory, an empty
+ * body, a filename that cannot be a name. Hand-built `Rule` objects would assert my
+ * beliefs about discovery instead of exercising discovery. The budget functions are the
+ * exception and take synthetic input — there the arithmetic *is* the subject.
+ */
+async function rulesSection() {
+  console.log("\nrules");
+
+  const home = await mkdtemp(path.join(os.tmpdir(), "trace-smoke-rules-home-"));
+  const rootA = await mkdtemp(path.join(os.tmpdir(), "trace-smoke-rules-a-"));
+  const rootB = await mkdtemp(path.join(os.tmpdir(), "trace-smoke-rules-b-"));
+  const registry = new WorkspaceRegistry();
+  const wsA = await registry.open(rootA);
+  const wsB = await registry.open(rootB);
+
+  const put = async (base, relative, contents) => {
+    const target = path.join(base, relative);
+    await mkdir(path.dirname(target), { recursive: true });
+    await writeFile(target, contents);
+  };
+
+  // -- user-global: shadowed by name, a hyphenated key, and a scope-free auto rule
+  await put(home, "rules/testing.md", "---\ndescription: How the user tests\n---\nUser testing.\n");
+  await put(home, "rules/style.md", "---\nalways-apply: true\n---\nTwo spaces.\n");
+  await put(home, "rules/anywhere.md", "---\nglobs: *.tsx\n---\nAny React file, any repo.\n");
+
+  // -- root A: the interesting cases
+  await put(rootA, "AGENTS.md", "# Repo A\n\nRun the build before you claim it works.\n");
+  await put(rootA, ".trace/rules/testing.md", "---\ndescription: How A tests\n---\nA testing.\n");
+  await put(
+    rootA,
+    ".trace/rules/review/security.mdc",
+    "---\ndescription: Security review\n---\nCheck authz.\n",
+  );
+  await put(
+    rootA,
+    ".trace/rules/frontend.md",
+    '---\nglobs: ["*.tsx", "src/**"]\nalwaysApply: false\n---\nFunction components only.\n',
+  );
+  await put(rootA, ".trace/rules/manual.md", "# Release checklist\n\nTag, then publish.\n");
+  await put(
+    rootA,
+    ".trace/rules/pinned.md",
+    "---\nalwaysApply: true\nglobs: *.ts\n---\nAlways this.\n",
+  );
+  await put(rootA, ".trace/rules/ci.md", "---\nglobs: .github/**\n---\nPin action SHAs.\n");
+  await put(rootA, ".trace/rules/empty.md", "---\ndescription: Nothing at all\n---\n");
+  await put(rootA, ".trace/rules/not a name.md", "---\ndescription: Unusable\n---\nNope.\n");
+  await put(rootA, ".trace/rules/notes.txt", "Not a rule file.\n");
+
+  // -- root B: the one override of the AGENTS.md default, and a scoped auto rule
+  await put(rootB, "AGENTS.md", "---\nalwaysApply: false\n---\nOnly when asked.\n");
+  await put(rootB, ".trace/rules/backend.md", "---\nglobs: *.py\n---\nType hints everywhere.\n");
+
+  const discovered = await discoverRules({ workspaces: [wsA, wsB], home });
+  const byName = new Map(discovered.map((rule) => [rule.name, rule]));
+  const named = (name) => byName.get(name);
+  // `AGENTS.md` is the one name two rules can share, so it is looked up by root.
+  const agentsFor = (workspaceId) =>
+    discovered.find((rule) => rule.source === "agents" && rule.workspaceId === workspaceId);
+  const countBySource = (source) => discovered.filter((rule) => rule.source === source).length;
+  const order = { user: 0, agents: 1, workspace: 2 };
+  const sequence = discovered.map((rule) => order[rule.source]);
+
+  check(
+    "orders user rules before AGENTS.md before workspace rules",
+    sequence.every((value, index) => index === 0 || sequence[index - 1] <= value),
+    discovered.map((rule) => `${rule.source}:${rule.name}`).join(" "),
+  );
+  check(
+    "and sorts by name within a source",
+    discovered.every(
+      (rule, index) =>
+        index === 0 ||
+        discovered[index - 1].source !== rule.source ||
+        discovered[index - 1].name <= rule.name,
+    ),
+  );
+  check(
+    "finds every rule and no more",
+    countBySource("user") === 2 &&
+      countBySource("agents") === 2 &&
+      countBySource("workspace") === 7,
+    `${countBySource("user")} user, ${countBySource("agents")} agents, ${countBySource("workspace")} workspace`,
+  );
+  check("both roots' AGENTS.md survive side by side", countBySource("agents") === 2);
+  check("skips a rule with no body", named("empty") === undefined);
+  check("skips a filename that cannot be a name", !discovered.some((r) => r.name.includes(" ")));
+  check("skips a file that is not .md or .mdc", named("notes") === undefined);
+  check(
+    "reads .mdc and namespaces a nested rule",
+    named("review:security")?.body.includes("authz") === true,
+  );
+
+  // -- activation, derived rather than declared
+  check("description only means agent", named("testing")?.activation === "agent");
+  check("alwaysApply, however spelled, means always", named("style")?.activation === "always");
+  check("globs mean auto", named("frontend")?.activation === "auto");
+  check("no frontmatter means manual", named("manual")?.activation === "manual");
+  check("AGENTS.md is always applied by default", agentsFor(wsA.id)?.activation === "always");
+  check(
+    "and honours an explicit alwaysApply: false",
+    agentsFor(wsB.id)?.activation === "manual",
+    agentsFor(wsB.id)?.activation,
+  );
+  check("alwaysApply wins over globs", named("pinned")?.activation === "always");
+  check("and drops the globs it would not use", named("pinned")?.globs.length === 0);
+  check(
+    "derives a description from the first line",
+    named("manual")?.description === "Release checklist",
+  );
+  check(
+    "a workspace rule shadows a user rule of the same name",
+    named("testing")?.source === "workspace",
+  );
+  check(
+    "and it is the workspace body that survives",
+    named("testing")?.body.includes("A testing") === true,
+  );
+
+  // -- glob attachment
+  const matchedTsx = matchAutoRules(discovered, [
+    { relative: "src/app/Button.tsx", workspaceId: wsA.id },
+  ]);
+  check(
+    "a bare *.tsx matches a nested path, and only auto rules match",
+    matchedTsx.map((rule) => rule.name).join() === "anywhere,frontend",
+    matchedTsx.map((rule) => rule.name).join(),
+  );
+  check(
+    "and at the root, where a strict path glob would also have matched",
+    matchAutoRules(discovered, [{ relative: "Button.tsx", workspaceId: wsA.id }])
+      .map((rule) => rule.name)
+      .join() === "anywhere,frontend",
+  );
+  check(
+    "a slash-bearing pattern stays anchored",
+    matchAutoRules(discovered, [{ relative: "src/a/b.ts", workspaceId: wsA.id }]).some(
+      (rule) => rule.name === "frontend",
+    ) &&
+      !matchAutoRules(discovered, [{ relative: "app/src/b.ts", workspaceId: wsA.id }]).some(
+        (rule) => rule.name === "frontend",
+      ),
+  );
+  check(
+    "matches inside a dot directory",
+    matchAutoRules(discovered, [{ relative: ".github/workflows/ci.yml", workspaceId: wsA.id }])
+      .map((rule) => rule.name)
+      .join() === "ci",
+  );
+  check(
+    "a workspace rule does not reach into another workspace",
+    matchAutoRules(discovered, [{ relative: "main.py", workspaceId: wsA.id }]).length === 0,
+  );
+  check(
+    "and does match in its own",
+    matchAutoRules(discovered, [{ relative: "main.py", workspaceId: wsB.id }])
+      .map((rule) => rule.name)
+      .join() === "backend",
+  );
+  check("no targets, no rules", matchAutoRules(discovered, []).length === 0);
+
+  // -- the always-applied budget, on synthetic rules: the arithmetic is the subject
+  const synthetic = (name, body, activation = "always") => ({
+    name,
+    description: name,
+    globs: [],
+    activation,
+    source: "workspace",
+    path: `/synthetic/${name}.md`,
+    workspaceId: null,
+    body,
+  });
+  const budgetSet = [
+    synthetic("first", "a".repeat(30)),
+    synthetic("second", "b".repeat(30)),
+    synthetic("third", "c".repeat(30), "agent"),
+  ];
+  const budgeted = selectAlwaysApplied(budgetSet, 50);
+  check("fills the budget in order", budgeted.rules.map((r) => r.name).join() === "first");
+  check("reports what did not fit", budgeted.omitted.join() === "second");
+  check("never considers a rule that is not always-applied", !budgeted.omitted.includes("third"));
+  check(
+    "keeps a single oversized rule rather than applying none",
+    selectAlwaysApplied([synthetic("huge", "x".repeat(100))], 50).rules.length === 1,
+  );
+
+  // The bug this suite exists for: a rule the budget dropped must stay reachable.
+  check(
+    "a budget-dropped always rule becomes fetchable",
+    fetchableRules(budgetSet, ["second"])
+      .map((r) => r.name)
+      .join() === "second,third",
+    fetchableRules(budgetSet, ["second"])
+      .map((r) => r.name)
+      .join(),
+  );
+  check(
+    "an in-prompt always rule does not",
+    !fetchableRules(budgetSet, []).some((rule) => rule.name === "first"),
+  );
+
+  const built = buildRuleSet(budgetSet, 50);
+  check(
+    "buildRuleSet ties the four views together",
+    built.all.length === 3 &&
+      built.applied.map((r) => r.name).join() === "first" &&
+      built.fetchable.map((r) => r.name).join() === "second,third" &&
+      built.omitted.join() === "second",
+  );
+  check(
+    "an empty rule set is empty and frozen",
+    EMPTY_RULE_SET.all.length === 0 &&
+      EMPTY_RULE_SET.applied.length === 0 &&
+      EMPTY_RULE_SET.fetchable.length === 0 &&
+      EMPTY_RULE_SET.omitted.length === 0 &&
+      Object.isFrozen(EMPTY_RULE_SET),
+  );
+  check(
+    "manual rules stay fetchable",
+    fetchableRules(discovered).some((r) => r.name === "manual"),
+  );
+
+  // -- findRule
+  check(
+    "finds a rule case-insensitively",
+    findRule(discovered, "REVIEW:Security")?.name === "review:security",
+  );
+  check("and tolerates surrounding space", findRule(discovered, " testing ")?.name === "testing");
+  check("returns nothing for a name that is not there", findRule(discovered, "nope") === undefined);
+
+  // -- fetch_rules, through the same dispatch the turn loop uses
+  const ruleSet = buildRuleSet(discovered);
+  const ruleSettings = new SettingsStore(home);
+  await ruleSettings.load();
+  const fetchCtx = (rules) => ({
+    sessionId: "smoke",
+    turnId: "turn-rules",
+    callId: "call-rules",
+    workspaces: registry,
+    workspace: wsA,
+    roots: registry.roots(),
+    settings: ruleSettings,
+    log: new Logger("rules"),
+    signal: new AbortController().signal,
+    emit: () => {},
+    files: new FileStateTracker(),
+    todos: { get: () => [], set: () => {} },
+    rules,
+  });
+
+  const fetched = await runTool("fetch_rules", { rule_names: ["testing"] }, fetchCtx(ruleSet));
+  check(
+    "fetches a rule by name",
+    fetched.isError === undefined &&
+      fetched.content.includes('<rule name="testing"') &&
+      fetched.content.includes("A testing"),
+    fetched.content,
+  );
+  check("summarises a single fetch", fetched.summary === "Read rule testing", fetched.summary);
+  check(
+    "hands the UI the file it came from",
+    fetched.meta?.rules?.[0]?.path?.endsWith("testing.md") === true,
+  );
+
+  const withGlobs = await runTool("fetch_rules", { rule_names: ["frontend"] }, fetchCtx(ruleSet));
+  check(
+    "shows an auto rule's trigger so the model knows it will return",
+    withGlobs.content.includes('globs="*.tsx, src/**"'),
+    withGlobs.content,
+  );
+
+  const several = await runTool(
+    "fetch_rules",
+    { rule_names: ["testing", " testing ", "manual"] },
+    fetchCtx(ruleSet),
+  );
+  check(
+    "trims and dedupes names",
+    several.summary === "Read 2 rules: testing, manual",
+    several.summary,
+  );
+
+  const inPrompt = await runTool("fetch_rules", { rule_names: ["pinned"] }, fetchCtx(ruleSet));
+  check(
+    "points at the prompt for an always-applied rule",
+    inPrompt.isError === true && inPrompt.content.includes("already in your system prompt"),
+    inPrompt.content,
+  );
+
+  const noSuchRule = await runTool("fetch_rules", { rule_names: ["nope"] }, fetchCtx(ruleSet));
+  check(
+    "lists what is fetchable when nothing matches",
+    noSuchRule.isError === true &&
+      noSuchRule.content.includes("No rule matched nope") &&
+      noSuchRule.content.includes("manual"),
+    noSuchRule.content,
+  );
+
+  const partial = await runTool(
+    "fetch_rules",
+    { rule_names: ["testing", "nope"] },
+    fetchCtx(ruleSet),
+  );
+  check(
+    "a partial hit still succeeds, with a note",
+    partial.isError === undefined && partial.content.includes("Not found: nope."),
+    partial.content,
+  );
+
+  const tooMany = await runTool(
+    "fetch_rules",
+    { rule_names: Array.from({ length: 11 }, (_, i) => `rule-${i}`) },
+    fetchCtx(ruleSet),
+  );
+  check(
+    "caps one call at ten rules",
+    tooMany.isError === true && tooMany.content.includes("the limit is 10 per call"),
+    tooMany.content,
+  );
+
+  const noneFetchable = await runTool(
+    "fetch_rules",
+    { rule_names: ["testing"] },
+    fetchCtx(EMPTY_RULE_SET),
+  );
+  check(
+    "says so when a stale cached prefix offers the tool with no rules behind it",
+    noneFetchable.isError === true &&
+      noneFetchable.content === "This workspace has no fetchable rules.",
+  );
+
+  const blank = await runTool("fetch_rules", { rule_names: ["   "] }, fetchCtx(ruleSet));
+  check(
+    "rejects a name that is only whitespace",
+    blank.isError === true && blank.content.includes("Name at least one rule"),
+  );
+  const emptyList = await runTool("fetch_rules", { rule_names: [] }, fetchCtx(ruleSet));
+  check(
+    "rejects an empty list at the schema",
+    emptyList.isError === true && emptyList.summary === "Invalid fetch_rules arguments",
+  );
+
+  // -- what the prompt does with a rule set
+  const promptWithRules = buildSystemPrompt({
+    roots: [rootA],
+    isGitRepo: false,
+    hasSemanticIndex: false,
+    today: "2026-09-02",
+    rules: {
+      applied: [{ name: "style", source: "user", body: "Two spaces." }],
+      fetchable: [
+        { name: "frontend", description: "React conventions", globs: ["*.tsx"] },
+        { name: "manual", description: "", globs: [] },
+      ],
+      omitted: ["huge"],
+    },
+  });
+  check("renders a rules section", promptWithRules.includes("# Project rules"));
+  check("inlines an applied rule in full", promptWithRules.includes("Two spaces."));
+  check(
+    "indexes a fetchable rule with its description",
+    promptWithRules.includes("- `frontend` — React conventions — attaches to *.tsx"),
+  );
+  check("indexes one with no description too", promptWithRules.includes("- `manual`"));
+  check(
+    "names the always-applied rules the budget dropped",
+    promptWithRules.includes("did not fit the prompt's rule budget: huge"),
+  );
+  check(
+    "renders AGENTS.md as coming from the project",
+    renderRule({ name: "AGENTS.md", source: "agents", body: "b" }).includes(
+      'from="project/AGENTS.md"',
+    ),
+  );
+  check(
+    "carries scope and globs when they are known",
+    renderRule({
+      name: "frontend",
+      source: "workspace",
+      body: "b",
+      scope: "app",
+      globs: "*.tsx",
+    }) === '<rule name="frontend" from="project" scope="app" globs="*.tsx">\nb\n</rule>',
+  );
+
+  await removeTemp(home);
+  await removeTemp(rootA);
+  await removeTemp(rootB);
 }
 
 /**
@@ -1097,7 +1733,8 @@ async function gitSection() {
   await mkdir(repo, { recursive: true });
   await mkdir(home, { recursive: true });
 
-  const run = (...args) => execFileSync("git", args, { cwd: repo, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+  const run = (...args) =>
+    execFileSync("git", args, { cwd: repo, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
   run("init", "-q", ".");
   run("config", "user.email", "smoke@trace.local");
   run("config", "user.name", "Smoke");
@@ -1121,20 +1758,38 @@ async function gitSection() {
 
   const status = await gitStatus(workspace);
   const byPath = (p) => status.files.filter((f) => f.path === p);
-  check("reports the branch", status.branch === "master" || status.branch === "main", status.branch);
+  check(
+    "reports the branch",
+    status.branch === "master" || status.branch === "main",
+    status.branch,
+  );
   check("sees a modified file", byPath("keep.txt")[0]?.status === "modified");
   check("sees a deleted file", byPath("gone.txt")[0]?.status === "deleted");
-  check("sees an untracked file with a space in its name", byPath("brand new.txt")[0]?.status === "untracked");
-  check("does not quote the path", byPath("brand new.txt").length === 1, JSON.stringify(status.files));
+  check(
+    "sees an untracked file with a space in its name",
+    byPath("brand new.txt")[0]?.status === "untracked",
+  );
+  check(
+    "does not quote the path",
+    byPath("brand new.txt").length === 1,
+    JSON.stringify(status.files),
+  );
   check("leaves ignored files out", byPath("node_modules/big.js").length === 0);
   check("reports nothing in progress", status.operationInProgress === false);
-  check("reports zero ahead and behind with no upstream", status.ahead === 0 && status.behind === 0);
+  check(
+    "reports zero ahead and behind with no upstream",
+    status.ahead === 0 && status.behind === 0,
+  );
 
   const staged = await gitStatus(workspace).then(() => {
     run("add", "keep.txt");
     return gitStatus(workspace);
   });
-  check("separates a staged change", staged.files.some((f) => f.path === "keep.txt" && f.staged), JSON.stringify(staged.files));
+  check(
+    "separates a staged change",
+    staged.files.some((f) => f.path === "keep.txt" && f.staged),
+    JSON.stringify(staged.files),
+  );
   run("reset", "-q");
 
   // -- diff ----------------------------------------------------------------
@@ -1142,22 +1797,41 @@ async function gitSection() {
   check("diffs a tracked change", trackedDiff.includes("-two") && trackedDiff.includes("+TWO"));
 
   const newDiff = await gitDiff(workspace, { path: "brand new.txt" });
-  check("synthesizes a diff for an untracked file", newDiff.includes("+fresh"), JSON.stringify(newDiff));
-  check("names the missing side /dev/null", newDiff.startsWith("--- /dev/null\n"), JSON.stringify(newDiff.slice(0, 40)));
+  check(
+    "synthesizes a diff for an untracked file",
+    newDiff.includes("+fresh"),
+    JSON.stringify(newDiff),
+  );
+  check(
+    "names the missing side /dev/null",
+    newDiff.startsWith("--- /dev/null\n"),
+    JSON.stringify(newDiff.slice(0, 40)),
+  );
   check(
     "does not invent a trailing blank line",
     newDiff.includes("@@ -0,0 +1,1 @@") && !/\+\n$/.test(newDiff),
     JSON.stringify(newDiff),
   );
-  check("empty diff for an unchanged file", (await gitDiff(workspace, { path: ".gitignore" })) === "");
+  check(
+    "empty diff for an unchanged file",
+    (await gitDiff(workspace, { path: ".gitignore" })) === "",
+  );
 
   // -- checkpoints ---------------------------------------------------------
   // Snapshotted rather than asserted absolutely: the setup above ran `git reset`, which
   // legitimately writes a reflog entry. What matters is that nothing below adds one.
   const reflogBefore = run("reflog").trim();
   const checkpoints = new CheckpointManager(workspace, home);
-  const first = await checkpoints.create({ sessionId: "s1", turnId: "t1", label: "Before the edit" });
-  check("writes a checkpoint", typeof first?.id === "string" && first.id.length === 40, JSON.stringify(first));
+  const first = await checkpoints.create({
+    sessionId: "s1",
+    turnId: "t1",
+    label: "Before the edit",
+  });
+  check(
+    "writes a checkpoint",
+    typeof first?.id === "string" && first.id.length === 40,
+    JSON.stringify(first),
+  );
 
   await writeFile(path.join(repo, "keep.txt"), "totally\ndifferent\n");
   await rm(path.join(repo, "brand new.txt"));
@@ -1167,18 +1841,35 @@ async function gitSection() {
 
   const listed = await checkpoints.list("s1");
   check("lists both checkpoints for the session", listed.length === 2, JSON.stringify(listed));
-  check("newest first", listed[0]?.label === "Second turn", JSON.stringify(listed.map((c) => c.label)));
+  check(
+    "newest first",
+    listed[0]?.label === "Second turn",
+    JSON.stringify(listed.map((c) => c.label)),
+  );
   check("carries the label through the commit message", listed[1]?.label === "Before the edit");
   check("carries the turn id", listed[0]?.turnId === "t2", listed[0]?.turnId);
   check("filters by session", (await checkpoints.list("s2")).length === 1);
   check("no checkpoints for an unknown session", (await checkpoints.list("nope")).length === 0);
 
   const restored = await checkpoints.restore(first.id);
-  check("restores the modified file", (await readFile(path.join(repo, "keep.txt"), "utf8")) === "one\nTWO\n");
-  check("brings back a file deleted since the checkpoint", await exists(path.join(repo, "brand new.txt")));
-  check("deletes a file created since the checkpoint", !(await exists(path.join(repo, "agent-made.txt"))));
+  check(
+    "restores the modified file",
+    (await readFile(path.join(repo, "keep.txt"), "utf8")) === "one\nTWO\n",
+  );
+  check(
+    "brings back a file deleted since the checkpoint",
+    await exists(path.join(repo, "brand new.txt")),
+  );
+  check(
+    "deletes a file created since the checkpoint",
+    !(await exists(path.join(repo, "agent-made.txt"))),
+  );
   check("leaves ignored files alone", await exists(path.join(repo, "node_modules", "big.js")));
-  check("reports every file it touched", restored.restoredFiles.length === 3, JSON.stringify(restored.restoredFiles));
+  check(
+    "reports every file it touched",
+    restored.restoredFiles.length === 3,
+    JSON.stringify(restored.restoredFiles),
+  );
   check("makes the restore itself undoable", typeof restored.safetyCheckpointId === "string");
 
   // The whole premise: the user's own git is untouched by any of the above.
@@ -1192,16 +1883,22 @@ async function gitSection() {
     run("status", "--porcelain"),
   );
 
-  const missing = await checkpoints
-    .restore("0000000000000000000000000000000000000000")
-    .then(() => null, (cause) => cause);
-  check("refuses an unknown checkpoint", missing !== null && /No such checkpoint/.test(missing.message));
+  const missing = await checkpoints.restore("0000000000000000000000000000000000000000").then(
+    () => null,
+    (cause) => cause,
+  );
+  check(
+    "refuses an unknown checkpoint",
+    missing !== null && /No such checkpoint/.test(missing.message),
+  );
 
   // -- pure parsers --------------------------------------------------------
   check("parses an empty status", parseStatus("").files.length === 0);
   check(
     "reads modes out of a raw diff",
-    parseRawDiff(":100644 100644 aa bb M\0a.txt\0").every((c) => c.srcMode === "100644" && c.status === "M"),
+    parseRawDiff(":100644 100644 aa bb M\0a.txt\0").every(
+      (c) => c.srcMode === "100644" && c.status === "M",
+    ),
   );
   check(
     "skips a gitlink in a raw diff",
@@ -1274,7 +1971,11 @@ async function engineSection() {
 
   const home = await mkdtemp(path.join(os.tmpdir(), "trace-engine-home-"));
   const root = await mkdtemp(path.join(os.tmpdir(), "trace-engine-ws-"));
-  await writeFile(path.join(root, "hello.ts"), 'export const greeting = "hello";\nexport const other = 1;\n', "utf8");
+  await writeFile(
+    path.join(root, "hello.ts"),
+    'export const greeting = "hello";\nexport const other = 1;\n',
+    "utf8",
+  );
 
   const pair = transportPair();
   const client = new RpcPeer(pair.client, { name: "smoke-client" });
@@ -1288,7 +1989,11 @@ async function engineSection() {
   client.on("terminal/output", (chunk) => output.push(chunk));
 
   /** Hand back the RpcError instead of throwing, so a code can be asserted on. */
-  const fails = (method, params) => client.request(method, params).then(() => null, (cause) => cause);
+  const fails = (method, params) =>
+    client.request(method, params).then(
+      () => null,
+      (cause) => cause,
+    );
 
   const identity = {
     name: "smoke",
@@ -1298,7 +2003,11 @@ async function engineSection() {
 
   // -- the gate ------------------------------------------------------------
   const early = await fails("session/list", {});
-  check("refuses a method before the handshake", early?.code === ErrorCode.NotInitialized, `got ${early?.code}`);
+  check(
+    "refuses a method before the handshake",
+    early?.code === ErrorCode.NotInitialized,
+    `got ${early?.code}`,
+  );
 
   const hello = await client.request("initialize", {
     protocolVersion: PROTOCOL_VERSION,
@@ -1306,11 +2015,26 @@ async function engineSection() {
     workspaceRoots: [root],
   });
   check("handshake agrees on the protocol version", hello.protocolVersion === PROTOCOL_VERSION);
-  check("handshake reports a real engine version", /^\d+\.\d+\.\d+/.test(hello.engineVersion), hello.engineVersion);
-  check("handshake names a default model", resolveModel(hello.defaultModel).id === hello.defaultModel);
+  check(
+    "handshake reports a real engine version",
+    /^\d+\.\d+\.\d+/.test(hello.engineVersion),
+    hello.engineVersion,
+  );
+  check(
+    "handshake names a default model",
+    resolveModel(hello.defaultModel).id === hello.defaultModel,
+  );
 
-  const twice = await fails("initialize", { protocolVersion: PROTOCOL_VERSION, client: identity, workspaceRoots: [] });
-  check("refuses a second handshake", twice?.code === ErrorCode.AlreadyInitialized, `got ${twice?.code}`);
+  const twice = await fails("initialize", {
+    protocolVersion: PROTOCOL_VERSION,
+    client: identity,
+    workspaceRoots: [],
+  });
+  check(
+    "refuses a second handshake",
+    twice?.code === ErrorCode.AlreadyInitialized,
+    `got ${twice?.code}`,
+  );
 
   // -- workspaces ----------------------------------------------------------
   const opened = await client.request("workspace/list", {});
@@ -1323,18 +2047,31 @@ async function engineSection() {
   // already closed is not making a mistake worth reporting. `workspace/index` is the one
   // that names an unknown id, because there it changes what the caller should do.
   const closedTwice = await fails("workspace/close", { workspaceId: "nope" });
-  check("closing a workspace that is not open is a no-op", closedTwice === null, `got ${closedTwice?.code}`);
+  check(
+    "closing a workspace that is not open is a no-op",
+    closedTwice === null,
+    `got ${closedTwice?.code}`,
+  );
   const noWorkspace = await fails("workspace/index", { workspaceId: "nope" });
-  check("names an unknown workspace", noWorkspace?.code === ErrorCode.WorkspaceNotFound, `got ${noWorkspace?.code}`);
+  check(
+    "names an unknown workspace",
+    noWorkspace?.code === ErrorCode.WorkspaceNotFound,
+    `got ${noWorkspace?.code}`,
+  );
 
   // Raised so the sink has something to carry — `main` runs at `error`.
   Logger.setLevel("warn");
   await client.request("workspace/index", { workspaceId });
-  const warned = await waitFor(() => logs.find((entry) => /indexing is not implemented/i.test(entry.message)));
+  const warned = await waitFor(() =>
+    logs.find((entry) => /indexing is not implemented/i.test(entry.message)),
+  );
   check("workspace/index refuses to fake progress", warned !== undefined);
   check("engine logs reach the client as notifications", warned?.scope === "engine", warned?.scope);
   const reListed = await client.request("workspace/list", {});
-  check("index status stays absent after an index request", reListed.workspaces[0]?.indexStatus === "absent");
+  check(
+    "index status stays absent after an index request",
+    reListed.workspaces[0]?.indexStatus === "absent",
+  );
   Logger.setLevel("error");
 
   // -- models --------------------------------------------------------------
@@ -1342,14 +2079,26 @@ async function engineSection() {
   // trusted to review. Every one of these has a visible failure mode in the picker.
   const models = await client.request("models/list", {});
   check("lists models", models.models.length > 0);
-  check("offers opus 5", models.models.some((model) => model.id === "claude-opus-5"));
-  check("every model carries a price", models.models.every((model) => model.inputUsdPerMTok > 0));
-  check("every model carries an output price", models.models.every((m) => m.outputUsdPerMTok > 0));
+  check(
+    "offers opus 5",
+    models.models.some((model) => model.id === "claude-opus-5"),
+  );
+  check(
+    "every model carries a price",
+    models.models.every((model) => model.inputUsdPerMTok > 0),
+  );
+  check(
+    "every model carries an output price",
+    models.models.every((m) => m.outputUsdPerMTok > 0),
+  );
   check("ids are unique", new Set(models.models.map((m) => m.id)).size === models.models.length);
 
   // An empty `access` array is a model nobody can select — it would render as a
   // permanently greyed row with no way to un-grey it.
-  check("every model is reachable somehow", models.models.every((m) => m.access.length > 0));
+  check(
+    "every model is reachable somehow",
+    models.models.every((m) => m.access.length > 0),
+  );
   check(
     "access modes are only account or byok",
     models.models.every((m) => m.access.every((a) => a === "account" || a === "byok")),
@@ -1364,7 +2113,10 @@ async function engineSection() {
   );
   // The converse: every model must at least be reachable through the gateway,
   // because that is the only route a signed-in user has.
-  check("every model is reachable by account", models.models.every((m) => m.access.includes("account")));
+  check(
+    "every model is reachable by account",
+    models.models.every((m) => m.access.includes("account")),
+  );
 
   // One badge per provider. Two would make the picker look like it cannot decide.
   const recommendedPerProvider = new Map();
@@ -1383,13 +2135,19 @@ async function engineSection() {
 
   // Both internal defaults must exist, and both must work before sign-in — the
   // engine falls back to them on a cold start with only a BYOK key present.
-  for (const [label, id] of [["default", DEFAULT_MODEL], ["utility", UTILITY_MODEL]]) {
+  for (const [label, id] of [
+    ["default", DEFAULT_MODEL],
+    ["utility", UTILITY_MODEL],
+  ]) {
     const found = models.models.find((m) => m.id === id);
     check(`the ${label} model is in the catalog`, found !== undefined, id);
     check(`the ${label} model works with a BYOK key`, found?.access.includes("byok") === true, id);
   }
 
-  check("output ceilings fit inside the context window", models.models.every((m) => m.maxOutputTokens < m.contextWindow));
+  check(
+    "output ceilings fit inside the context window",
+    models.models.every((m) => m.maxOutputTokens < m.contextWindow),
+  );
   check("a stale model id falls back to the default", resolveModel("gpt-2").id === DEFAULT_MODEL);
 
   // -- settings ------------------------------------------------------------
@@ -1397,15 +2155,26 @@ async function engineSection() {
   check("settings arrive with a permission mode", typeof before.permissions.mode === "string");
 
   const clamped = await client.request("settings/update", {
-    patch: { maxIterationsPerTurn: 100000, effort: "ludicrous", showThinking: true, nonsense: true },
+    patch: {
+      maxIterationsPerTurn: 100000,
+      effort: "ludicrous",
+      showThinking: true,
+      nonsense: true,
+    },
   });
-  check("clamps a runaway iteration cap", clamped.maxIterationsPerTurn === 500, `${clamped.maxIterationsPerTurn}`);
+  check(
+    "clamps a runaway iteration cap",
+    clamped.maxIterationsPerTurn === 500,
+    `${clamped.maxIterationsPerTurn}`,
+  );
   check("drops an invalid effort", clamped.effort === before.effort, clamped.effort);
   check("keeps a valid field alongside a rejected one", clamped.showThinking === true);
   check("does not persist an unknown field", !("nonsense" in clamped));
 
   const badRules = await client.request("settings/update", {
-    patch: { permissions: { mode: "auto_edit", rules: [{ tool: "write_file", action: "sideways" }] } },
+    patch: {
+      permissions: { mode: "auto_edit", rules: [{ tool: "write_file", action: "sideways" }] },
+    },
   });
   check(
     "rejects a malformed permission set whole rather than in part",
@@ -1414,18 +2183,34 @@ async function engineSection() {
   const goodRules = await client.request("settings/update", {
     patch: { permissions: { mode: "plan", rules: [{ tool: "*", action: "deny" }] } },
   });
-  check("accepts a well-formed permission set", goodRules.permissions.mode === "plan" && goodRules.permissions.rules.length === 1);
+  check(
+    "accepts a well-formed permission set",
+    goodRules.permissions.mode === "plan" && goodRules.permissions.rules.length === 1,
+  );
   await client.request("settings/update", { patch: { permissions: before.permissions } });
 
-  const unknownProvider = await fails("settings/setProviderKey", { provider: "openai", apiKey: "x" });
-  check("refuses an unknown provider", unknownProvider?.code === ErrorCode.InvalidParams, `got ${unknownProvider?.code}`);
+  const unknownProvider = await fails("settings/setProviderKey", {
+    provider: "openai",
+    apiKey: "x",
+  });
+  check(
+    "refuses an unknown provider",
+    unknownProvider?.code === ErrorCode.InvalidParams,
+    `got ${unknownProvider?.code}`,
+  );
   // Only the clearing path is exercised: storing a key would trigger the live probe,
   // and this harness does not talk to the network.
-  const cleared = await client.request("settings/setProviderKey", { provider: "anthropic", apiKey: "   " });
+  const cleared = await client.request("settings/setProviderKey", {
+    provider: "anthropic",
+    apiKey: "   ",
+  });
   check("a blank key clears rather than stores", cleared.configured === false);
   const keys = await client.request("settings/providerKeys", {});
   check("reports a status per known provider", keys.keys.length >= 1);
-  check("never echoes a secret back", keys.keys.every((status) => !("apiKey" in status)));
+  check(
+    "never echoes a secret back",
+    keys.keys.every((status) => !("apiKey" in status)),
+  );
 
   // -- filesystem ----------------------------------------------------------
   await client.request("fs/write", { path: "nested/deep/note.md", content: "one\ntwo\nthree\n" });
@@ -1434,30 +2219,67 @@ async function engineSection() {
   check("counts lines the way git would", whole.totalLines === 3, `${whole.totalLines}`);
   check("a whole-file read is not truncated", whole.truncated === false);
 
-  const slice = await client.request("fs/read", { path: "nested/deep/note.md", startLine: 2, endLine: 2 });
-  check("reads an inclusive 1-indexed range", slice.content === "two", JSON.stringify(slice.content));
+  const slice = await client.request("fs/read", {
+    path: "nested/deep/note.md",
+    startLine: 2,
+    endLine: 2,
+  });
+  check(
+    "reads an inclusive 1-indexed range",
+    slice.content === "two",
+    JSON.stringify(slice.content),
+  );
   check("says a partial read is truncated", slice.truncated === true);
   check("still reports the real total", slice.totalLines === 3);
 
   const entries = await client.request("fs/list", { path: "." });
-  check("lists the workspace root", entries.entries.some((entry) => entry.name === "hello.ts"));
-  check("marks a directory as one", entries.entries.find((entry) => entry.name === "nested")?.kind === "directory");
+  check(
+    "lists the workspace root",
+    entries.entries.some((entry) => entry.name === "hello.ts"),
+  );
+  check(
+    "marks a directory as one",
+    entries.entries.find((entry) => entry.name === "nested")?.kind === "directory",
+  );
 
   const asFile = await fails("fs/read", { path: "nested" });
-  check("refuses to read a directory as a file", asFile?.code === ErrorCode.InvalidParams, `got ${asFile?.code}`);
+  check(
+    "refuses to read a directory as a file",
+    asFile?.code === ErrorCode.InvalidParams,
+    `got ${asFile?.code}`,
+  );
   const absent = await fails("fs/read", { path: "nope.txt" });
   check("names a missing file", absent?.code === ErrorCode.FileNotFound, `got ${absent?.code}`);
   const escaped = await fails("fs/read", { path: "../outside.txt" });
-  check("refuses to escape the workspace", escaped?.code === ErrorCode.PathOutsideWorkspace, `got ${escaped?.code}`);
+  check(
+    "refuses to escape the workspace",
+    escaped?.code === ErrorCode.PathOutsideWorkspace,
+    `got ${escaped?.code}`,
+  );
 
   // -- search --------------------------------------------------------------
   const found = await client.request("search/text", { query: "greeting" });
-  check("search/text finds what the agent's grep would", found.matches.some((match) => match.path === "hello.ts"));
-  check("search/text reports 1-indexed columns", found.matches.every((match) => match.column >= 1));
-  const nothing = await client.request("search/text", { query: "definitely-not-in-this-workspace" });
-  check("an empty search is not an error", nothing.matches.length === 0 && nothing.truncated === false);
+  check(
+    "search/text finds what the agent's grep would",
+    found.matches.some((match) => match.path === "hello.ts"),
+  );
+  check(
+    "search/text reports 1-indexed columns",
+    found.matches.every((match) => match.column >= 1),
+  );
+  const nothing = await client.request("search/text", {
+    query: "definitely-not-in-this-workspace",
+  });
+  check(
+    "an empty search is not an error",
+    nothing.matches.length === 0 && nothing.truncated === false,
+  );
   const badRegex = await fails("search/text", { query: "a(", isRegex: true });
-  check("a half-typed regex is reported, not crashed on", badRegex?.code === ErrorCode.InvalidParams, `got ${badRegex?.code}`);
+  check(
+    "a half-typed regex is reported, not crashed on",
+    badRegex?.code === ErrorCode.InvalidParams,
+    `got ${badRegex?.code}`,
+  );
 
   // -- sessions ------------------------------------------------------------
   const session = await client.request("session/create", { workspaceId });
@@ -1466,7 +2288,11 @@ async function engineSection() {
   check("a new session takes the workspace it was given", session.workspaceId === workspaceId);
 
   const idleSteer = await fails("session/steer", { sessionId: session.id, text: "hi" });
-  check("refuses to steer an idle session", idleSteer?.code === ErrorCode.InvalidParams, `got ${idleSteer?.code}`);
+  check(
+    "refuses to steer an idle session",
+    idleSteer?.code === ErrorCode.InvalidParams,
+    `got ${idleSteer?.code}`,
+  );
   await client.request("session/interrupt", { sessionId: session.id });
   check("interrupting an idle session does not throw", true);
   await client.request("session/resolvePermission", {
@@ -1477,7 +2303,10 @@ async function engineSection() {
   check("answering a permission nobody asked for is quiet", true);
 
   await client.request("session/rename", { sessionId: session.id, title: "Renamed by smoke" });
-  check("rename sticks", (await client.request("session/get", { sessionId: session.id })).title === "Renamed by smoke");
+  check(
+    "rename sticks",
+    (await client.request("session/get", { sessionId: session.id })).title === "Renamed by smoke",
+  );
   const byTitle = await client.request("session/search", { query: "renamed BY" });
   check(
     "session/search matches a title case-insensitively",
@@ -1485,36 +2314,72 @@ async function engineSection() {
     JSON.stringify(byTitle.hits),
   );
 
-  const child = await client.request("session/create", { parentSessionId: session.id, inheritContext: true });
+  const child = await client.request("session/create", {
+    parentSessionId: session.id,
+    inheritContext: true,
+  });
   check("a side chat inherits its parent's workspace", child.workspaceId === workspaceId);
   check("a side chat is its own session", child.id !== session.id);
 
   const unknownSession = await fails("session/get", { sessionId: "nope" });
-  check("names an unknown session", unknownSession?.code === ErrorCode.SessionNotFound, `got ${unknownSession?.code}`);
+  check(
+    "names an unknown session",
+    unknownSession?.code === ErrorCode.SessionNotFound,
+    `got ${unknownSession?.code}`,
+  );
 
   const all = await client.request("session/list", {});
-  check("lists both sessions", all.sessions.filter((s) => s.id === session.id || s.id === child.id).length === 2);
-  check("filters by workspace", (await client.request("session/list", { workspaceId: "other" })).sessions.length === 0);
+  check(
+    "lists both sessions",
+    all.sessions.filter((s) => s.id === session.id || s.id === child.id).length === 2,
+  );
+  check(
+    "filters by workspace",
+    (await client.request("session/list", { workspaceId: "other" })).sessions.length === 0,
+  );
 
-  check("a session with no turns has no transcript", (await client.request("session/history", { sessionId: session.id })).entries.length === 0);
-  check("a fresh session has no checkpoints", (await client.request("checkpoint/list", { sessionId: session.id })).checkpoints.length === 0);
-  const badRestore = await fails("checkpoint/restore", { sessionId: session.id, checkpointId: "0".repeat(40) });
+  check(
+    "a session with no turns has no transcript",
+    (await client.request("session/history", { sessionId: session.id })).entries.length === 0,
+  );
+  check(
+    "a fresh session has no checkpoints",
+    (await client.request("checkpoint/list", { sessionId: session.id })).checkpoints.length === 0,
+  );
+  const badRestore = await fails("checkpoint/restore", {
+    sessionId: session.id,
+    checkpointId: "0".repeat(40),
+  });
   check("refuses to restore a checkpoint that does not exist", badRestore !== null);
 
   // -- one turn, with the key deliberately absent ---------------------------
   await client.request("settings/deleteProviderKey", { provider: "anthropic" });
   const titled = await client.request("session/create", { workspaceId });
-  const { turnId } = await client.request("session/prompt", { sessionId: titled.id, text: "# Fix the parser\nplease" });
-  check("prompt returns a turn id without waiting for the turn", typeof turnId === "string" && turnId.length > 0);
+  const { turnId } = await client.request("session/prompt", {
+    sessionId: titled.id,
+    text: "# Fix the parser\nplease",
+  });
+  check(
+    "prompt returns a turn id without waiting for the turn",
+    typeof turnId === "string" && turnId.length > 0,
+  );
 
-  const failed = await waitFor(() => turnEvents.find((event) => event.type === "error" && event.turnId === turnId));
-  check("a keyless turn fails with MissingApiKey", failed?.code === ErrorCode.MissingApiKey, `got ${failed?.code}`);
+  const failed = await waitFor(() =>
+    turnEvents.find((event) => event.type === "error" && event.turnId === turnId),
+  );
+  check(
+    "a keyless turn fails with MissingApiKey",
+    failed?.code === ErrorCode.MissingApiKey,
+    `got ${failed?.code}`,
+  );
   check("that failure is fatal to the turn", failed?.fatal === true);
 
   const recorded = await client.request("session/history", { sessionId: titled.id });
   check(
     "the prompt is transcribed before the turn runs",
-    recorded.entries.some((entry) => entry.kind === "user_message" && entry.text.startsWith("# Fix the parser")),
+    recorded.entries.some(
+      (entry) => entry.kind === "user_message" && entry.text.startsWith("# Fix the parser"),
+    ),
   );
   check(
     "a session titles itself from its first prompt",
@@ -1523,27 +2388,58 @@ async function engineSection() {
 
   await client.request("session/delete", { sessionId: child.id });
   const deleted = await fails("session/get", { sessionId: child.id });
-  check("a deleted session is gone", deleted?.code === ErrorCode.SessionNotFound, `got ${deleted?.code}`);
+  check(
+    "a deleted session is gone",
+    deleted?.code === ErrorCode.SessionNotFound,
+    `got ${deleted?.code}`,
+  );
 
   // -- git -----------------------------------------------------------------
   // The positive paths live in `gitSection`, against a real repo. What matters here is
   // that a folder git knows nothing about produces an error rather than a hang.
   const notARepo = await fails("git/status", { workspaceId });
-  check("git/status on a plain folder fails rather than lying", notARepo?.code === ErrorCode.InvalidParams, `got ${notARepo?.code}`);
+  check(
+    "git/status on a plain folder fails rather than lying",
+    notARepo?.code === ErrorCode.InvalidParams,
+    `got ${notARepo?.code}`,
+  );
 
   // -- terminals -----------------------------------------------------------
   const noTerminal = await fails("terminal/input", { terminalId: "nope", data: "x" });
-  check("names an unknown terminal", noTerminal?.code === ErrorCode.TerminalNotFound, `got ${noTerminal?.code}`);
+  check(
+    "names an unknown terminal",
+    noTerminal?.code === ErrorCode.TerminalNotFound,
+    `got ${noTerminal?.code}`,
+  );
 
-  const terminal = await client.request("terminal/create", { workspaceId, cols: 80, rows: 24 }).then((r) => r, (cause) => cause);
+  const terminal = await client
+    .request("terminal/create", { workspaceId, cols: 80, rows: 24 })
+    .then(
+      (r) => r,
+      (cause) => cause,
+    );
   if (terminal instanceof Error) {
-    check("an unavailable pty is reported as itself", /unavailable/i.test(terminal.message), terminal.message);
+    check(
+      "an unavailable pty is reported as itself",
+      /unavailable/i.test(terminal.message),
+      terminal.message,
+    );
   } else {
-    await client.request("terminal/input", { terminalId: terminal.terminalId, data: "echo trace-smoke-marker\r" });
-    const echoed = await waitFor(() => output.find((chunk) => chunk.data.includes("trace-smoke-marker")), 15000);
+    await client.request("terminal/input", {
+      terminalId: terminal.terminalId,
+      data: "echo trace-smoke-marker\r",
+    });
+    const echoed = await waitFor(
+      () => output.find((chunk) => chunk.data.includes("trace-smoke-marker")),
+      15000,
+    );
     check("a terminal echoes what is typed into it", echoed !== undefined);
     check("output is tagged with its terminal", echoed?.terminalId === terminal.terminalId);
-    await client.request("terminal/resize", { terminalId: terminal.terminalId, cols: 100, rows: 30 });
+    await client.request("terminal/resize", {
+      terminalId: terminal.terminalId,
+      cols: 100,
+      rows: 30,
+    });
     check("resizing a live terminal does not throw", true);
     await client.request("terminal/close", { terminalId: terminal.terminalId });
     await client.request("terminal/close", { terminalId: terminal.terminalId });
@@ -1563,9 +2459,20 @@ async function engineSection() {
   const oldClient = new RpcPeer(other.client, { name: "smoke-old-client" });
   const otherEngine = new Engine(new RpcPeer(other.engine, { name: "smoke-engine-2" }), { home });
   const mismatch = await oldClient
-    .request("initialize", { protocolVersion: PROTOCOL_VERSION + 1, client: identity, workspaceRoots: [] })
-    .then(() => null, (cause) => cause);
-  check("refuses a client speaking another protocol version", mismatch?.code === ErrorCode.ProtocolVersionMismatch, `got ${mismatch?.code}`);
+    .request("initialize", {
+      protocolVersion: PROTOCOL_VERSION + 1,
+      client: identity,
+      workspaceRoots: [],
+    })
+    .then(
+      () => null,
+      (cause) => cause,
+    );
+  check(
+    "refuses a client speaking another protocol version",
+    mismatch?.code === ErrorCode.ProtocolVersionMismatch,
+    `got ${mismatch?.code}`,
+  );
   await otherEngine.shutdown();
 
   await removeTemp(home);
@@ -1670,7 +2577,9 @@ function spawnEngine(args = []) {
 /** Run the binary to completion with no protocol traffic, and collect its streams. */
 function runEngineOnce(args) {
   return new Promise((resolve) => {
-    const child = spawn(process.execPath, [MAIN_JS, ...args], { stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(process.execPath, [MAIN_JS, ...args], {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
     let stdout = "";
     let stderr = "";
     child.stdout.setEncoding("utf8");
@@ -1696,15 +2605,25 @@ async function processSection() {
   // -- argv ----------------------------------------------------------------
   const version = await runEngineOnce(["--version"]);
   check("--version exits 0", version.code === 0, `code ${version.code}`);
-  check("--version prints a version on stdout", /^\d+\.\d+\.\d+/.test(version.stdout.trim()), JSON.stringify(version.stdout));
+  check(
+    "--version prints a version on stdout",
+    /^\d+\.\d+\.\d+/.test(version.stdout.trim()),
+    JSON.stringify(version.stdout),
+  );
 
   const help = await runEngineOnce(["--help"]);
   check("--help exits 0", help.code === 0, `code ${help.code}`);
-  check("--help explains what stdout is for", /stdout carries protocol frames only/.test(help.stdout));
+  check(
+    "--help explains what stdout is for",
+    /stdout carries protocol frames only/.test(help.stdout),
+  );
 
   const bogus = await runEngineOnce(["--frobnicate"]);
   check("an unknown flag exits non-zero", bogus.code === 2, `code ${bogus.code}`);
-  check("an unknown flag complains on stderr, not stdout", bogus.stdout === "" && /Unknown argument/.test(bogus.stderr));
+  check(
+    "an unknown flag complains on stderr, not stdout",
+    bogus.stdout === "" && /Unknown argument/.test(bogus.stderr),
+  );
 
   const badLevel = await runEngineOnce(["--log-level", "chatty"]);
   check("an invalid log level exits non-zero", badLevel.code === 2, `code ${badLevel.code}`);
@@ -1733,7 +2652,11 @@ async function processSection() {
   // The whole reason `main.ts` hijacks stdout. At `--log-level debug` the engine has
   // certainly logged by now; if any of it had reached stdout the frame above would not
   // have decoded, so this asserts the *positive* half: the logs exist, elsewhere.
-  check("logs go to stderr", /Trace engine .* ready on stdio/.test(engine.stderr()), engine.stderr().slice(0, 200));
+  check(
+    "logs go to stderr",
+    /Trace engine .* ready on stdio/.test(engine.stderr()),
+    engine.stderr().slice(0, 200),
+  );
 
   const list = await engine.peer.request("workspace/list", {}, { timeoutMs: 10000 });
   check("the spawned engine opened the root it was given", list.workspaces.length === 1);
@@ -1749,11 +2672,22 @@ async function processSection() {
   );
   const wrote = await readFile(path.join(root, "spawned", "note.txt"), "utf8").catch(() => null);
   check("fs/write lands on disk across a pipe", wrote === "over a pipe\n", JSON.stringify(wrote));
-  check("debug logging is actually on", /\[debug\]/.test(engine.stderr()), engine.stderr().slice(-300));
+  check(
+    "debug logging is actually on",
+    /\[debug\]/.test(engine.stderr()),
+    engine.stderr().slice(-300),
+  );
 
   // A `--home` that was ignored would put sessions in the developer's real ~/.trace.
-  const spawned = await engine.peer.request("session/create", { workspaceId: list.workspaces[0]?.id }, { timeoutMs: 10000 });
-  const onDisk = await stat(path.join(home, "sessions", spawned.id, "meta.json")).then(() => true, () => false);
+  const spawned = await engine.peer.request(
+    "session/create",
+    { workspaceId: list.workspaces[0]?.id },
+    { timeoutMs: 10000 },
+  );
+  const onDisk = await stat(path.join(home, "sessions", spawned.id, "meta.json")).then(
+    () => true,
+    () => false,
+  );
   check("--home is where state actually lands", onDisk, path.join(home, "sessions"));
 
   // -- a frame it cannot parse ---------------------------------------------
@@ -1761,14 +2695,22 @@ async function processSection() {
   // sharing the connection. Sent raw, since a well-behaved peer cannot produce it.
   engine.child.stdin.write("this is not json\n");
   engine.child.stdin.write('{"jsonrpc":"2.0","id":9,"method":\n');
-  const survived = await engine.peer.request("models/list", {}, { timeoutMs: 10000 }).then((r) => r, () => null);
+  const survived = await engine.peer.request("models/list", {}, { timeoutMs: 10000 }).then(
+    (r) => r,
+    () => null,
+  );
   check("an unparseable frame does not kill the connection", survived !== null);
   check("an unparseable frame is reported on stderr", /unparseable frame/i.test(engine.stderr()));
 
-  const unknownMethod = await engine.peer
-    .request("nonsense/method", {}, { timeoutMs: 10000 })
-    .then(() => null, (cause) => cause);
-  check("an unknown method is MethodNotFound", unknownMethod?.code === ErrorCode.MethodNotFound, `got ${unknownMethod?.code}`);
+  const unknownMethod = await engine.peer.request("nonsense/method", {}, { timeoutMs: 10000 }).then(
+    () => null,
+    (cause) => cause,
+  );
+  check(
+    "an unknown method is MethodNotFound",
+    unknownMethod?.code === ErrorCode.MethodNotFound,
+    `got ${unknownMethod?.code}`,
+  );
 
   // -- shutdown, then disconnect -------------------------------------------
   await engine.peer.request("shutdown", {}, { timeoutMs: 20000 });
@@ -1776,7 +2718,11 @@ async function processSection() {
   engine.disconnect();
   const exited = await exitWithin(engine.exit, 20000);
   check("closing stdin ends the process", exited !== "timeout", "still running after 20s");
-  check("a clean shutdown exits 0", exited !== "timeout" && exited.code === 0, `code ${exited === "timeout" ? "none" : exited.code}`);
+  check(
+    "a clean shutdown exits 0",
+    exited !== "timeout" && exited.code === 0,
+    `code ${exited === "timeout" ? "none" : exited.code}`,
+  );
   check("stdout carried only frames", engine.stdoutBytes() > 0);
 
   // -- the parent that never says goodbye ----------------------------------
@@ -1790,8 +2736,16 @@ async function processSection() {
   );
   orphan.disconnect();
   const orphanExit = await exitWithin(orphan.exit, 20000);
-  check("a disconnect with no shutdown still ends the process", orphanExit !== "timeout", "orphaned");
-  check("an unrequested disconnect is not an error", orphanExit !== "timeout" && orphanExit.code === 0, `code ${orphanExit === "timeout" ? "none" : orphanExit.code}`);
+  check(
+    "a disconnect with no shutdown still ends the process",
+    orphanExit !== "timeout",
+    "orphaned",
+  );
+  check(
+    "an unrequested disconnect is not an error",
+    orphanExit !== "timeout" && orphanExit.code === 0,
+    `code ${orphanExit === "timeout" ? "none" : orphanExit.code}`,
+  );
 
   // -- shutdown with the pipe held open ------------------------------------
   // The backstop in `onShutdown`. A client that asks the engine to stop and then keeps
@@ -1804,7 +2758,11 @@ async function processSection() {
   );
   await held.peer.request("shutdown", {}, { timeoutMs: 20000 });
   const heldExit = await exitWithin(held.exit, 20000);
-  check("shutdown alone eventually ends the process", heldExit !== "timeout", "held open past the grace period");
+  check(
+    "shutdown alone eventually ends the process",
+    heldExit !== "timeout",
+    "held open past the grace period",
+  );
   if (heldExit === "timeout") held.child.kill();
 
   // -- signals -------------------------------------------------------------
@@ -1820,7 +2778,11 @@ async function processSection() {
   const signalExit = await exitWithin(signalled.exit, 20000);
   check("SIGTERM ends the process", signalExit !== "timeout", "survived SIGTERM");
   if (process.platform !== "win32") {
-    check("a signalled shutdown is still clean", signalExit !== "timeout" && signalExit.code === 0, `code ${signalExit === "timeout" ? "none" : signalExit.code}`);
+    check(
+      "a signalled shutdown is still clean",
+      signalExit !== "timeout" && signalExit.code === 0,
+      `code ${signalExit === "timeout" ? "none" : signalExit.code}`,
+    );
   }
 
   await removeTemp(home);

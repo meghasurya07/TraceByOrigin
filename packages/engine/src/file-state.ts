@@ -41,6 +41,17 @@ export class FileStateTracker {
     return this.reads.has(absolutePath);
   }
 
+  /**
+   * Every absolute path this session has read or written.
+   *
+   * Exists for auto-attached rules: a rule scoped to `*.tsx` should fire when the agent
+   * opens a `.tsx` file itself, not only when the user @-mentions one. Insertion-ordered,
+   * because `Map` is, which keeps rule attachment deterministic for a given turn.
+   */
+  touched(): string[] {
+    return [...this.reads.keys()];
+  }
+
   forget(absolutePath: string): void {
     this.reads.delete(absolutePath);
   }
