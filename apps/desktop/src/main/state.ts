@@ -78,9 +78,14 @@ function coerce(raw: unknown): PersistedState {
   const value = raw as Partial<PersistedState>;
 
   const bounds = value.bounds;
-  const width = typeof bounds?.width === "number" && bounds.width > 320 ? bounds.width : DEFAULT_STATE.bounds.width;
+  const width =
+    typeof bounds?.width === "number" && bounds.width > 320
+      ? bounds.width
+      : DEFAULT_STATE.bounds.width;
   const height =
-    typeof bounds?.height === "number" && bounds.height > 240 ? bounds.height : DEFAULT_STATE.bounds.height;
+    typeof bounds?.height === "number" && bounds.height > 240
+      ? bounds.height
+      : DEFAULT_STATE.bounds.height;
 
   return {
     bounds: {

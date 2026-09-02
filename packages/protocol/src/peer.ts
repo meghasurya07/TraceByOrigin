@@ -330,7 +330,11 @@ export class RpcPeer {
   private reportInternal(cause: unknown, context: string): void {
     const error = cause instanceof Error ? cause : new Error(String(cause));
     if (this.options.onInternalError) this.options.onInternalError(error, context);
-    else console.error(`[RpcPeer${this.options.name ? `:${this.options.name}` : ""}] ${context}`, error);
+    else
+      console.error(
+        `[RpcPeer${this.options.name ? `:${this.options.name}` : ""}] ${context}`,
+        error,
+      );
   }
 
   close(): void {

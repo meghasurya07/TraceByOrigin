@@ -130,9 +130,28 @@ test("a tool call streams input, runs, and settles", () => {
   const callId = "c1";
   const view = replay([
     started,
-    { type: "tool_call_started", sessionId: SESSION, turnId: TURN, callId, tool: "read_file", blockIndex: 1 },
-    { type: "tool_call_input_delta", sessionId: SESSION, turnId: TURN, callId, partialJson: '{"pa' },
-    { type: "tool_call_input_delta", sessionId: SESSION, turnId: TURN, callId, partialJson: 'th":"a.ts"}' },
+    {
+      type: "tool_call_started",
+      sessionId: SESSION,
+      turnId: TURN,
+      callId,
+      tool: "read_file",
+      blockIndex: 1,
+    },
+    {
+      type: "tool_call_input_delta",
+      sessionId: SESSION,
+      turnId: TURN,
+      callId,
+      partialJson: '{"pa',
+    },
+    {
+      type: "tool_call_input_delta",
+      sessionId: SESSION,
+      turnId: TURN,
+      callId,
+      partialJson: 'th":"a.ts"}',
+    },
   ]);
   const streaming = view.items[0];
   assert.equal(streaming.status, "streaming_input");
@@ -168,13 +187,29 @@ test("tool output keeps the tail, not the head", () => {
   const callId = "c1";
   const base = replay([
     started,
-    { type: "tool_call_started", sessionId: SESSION, turnId: TURN, callId, tool: "run_terminal_cmd", blockIndex: 0 },
+    {
+      type: "tool_call_started",
+      sessionId: SESSION,
+      turnId: TURN,
+      callId,
+      tool: "run_terminal_cmd",
+      blockIndex: 0,
+    },
   ]);
-  const chunk = { type: "tool_call_output_delta", sessionId: SESSION, turnId: TURN, callId, stream: "stdout" };
-  const view = replay([
-    { ...chunk, chunk: "x".repeat(TOOL_OUTPUT_CAP_CHARS) },
-    { ...chunk, chunk: "ERROR: build failed" },
-  ], base);
+  const chunk = {
+    type: "tool_call_output_delta",
+    sessionId: SESSION,
+    turnId: TURN,
+    callId,
+    stream: "stdout",
+  };
+  const view = replay(
+    [
+      { ...chunk, chunk: "x".repeat(TOOL_OUTPUT_CAP_CHARS) },
+      { ...chunk, chunk: "ERROR: build failed" },
+    ],
+    base,
+  );
 
   const item = view.items[0];
   assert.equal(item.output.length, TOOL_OUTPUT_CAP_CHARS);
@@ -253,7 +288,15 @@ test("turn_completed closes open blocks, adds a summary, and sums the cost", () 
 test("a fatal error ends the turn; a non-fatal one does not", () => {
   const soft = replay([
     started,
-    { type: "error", sessionId: SESSION, turnId: TURN, code: -32_001, message: "Rate limited.", fatal: false, retryInMs: 2_000 },
+    {
+      type: "error",
+      sessionId: SESSION,
+      turnId: TURN,
+      code: -32_001,
+      message: "Rate limited.",
+      fatal: false,
+      retryInMs: 2_000,
+    },
   ]);
   assert.equal(soft.live?.turnId, TURN, "the engine retries this one itself");
   assert.equal(soft.items[0].retryInMs, 2_000);
@@ -293,7 +336,11 @@ test("visibleItems hides reasoning and empty text, by reference when it can", ()
     { type: "thinking_delta", sessionId: SESSION, turnId: TURN, blockIndex: 0, text: "Consider…" },
     { type: "text_delta", sessionId: SESSION, turnId: TURN, blockIndex: 1, text: "Here." },
   ]);
-  assert.equal(visibleItems(view, { showThinking: true }), view.items, "no copy when nothing is hidden");
+  assert.equal(
+    visibleItems(view, { showThinking: true }),
+    view.items,
+    "no copy when nothing is hidden",
+  );
   assert.equal(visibleItems(view, { showThinking: false }).length, 1);
 
   const empty = applyEvent(view, {

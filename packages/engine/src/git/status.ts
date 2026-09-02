@@ -42,19 +42,15 @@ const IN_PROGRESS_MARKERS = [
 
 export async function gitStatus(workspace: Workspace): Promise<GitStatusResult> {
   if (!workspace.isGitRepo) {
-    throw new RpcError(
-      ErrorCode.InvalidParams,
-      `"${workspace.name}" is not a git repository.`,
-    );
+    throw new RpcError(ErrorCode.InvalidParams, `"${workspace.name}" is not a git repository.`);
   }
 
   // `--untracked-files=all` rather than the default `normal`: the default collapses a new
   // directory into one entry, which is exactly wrong when the agent has just scaffolded
   // one and the user wants to review the files inside it.
-  const raw = await git(
-    ["status", "--porcelain=v2", "--branch", "--untracked-files=all", "-z"],
-    { cwd: workspace.root },
-  );
+  const raw = await git(["status", "--porcelain=v2", "--branch", "--untracked-files=all", "-z"], {
+    cwd: workspace.root,
+  });
 
   const parsed = parseStatus(raw);
   return {

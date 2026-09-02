@@ -48,7 +48,13 @@ export function SessionSearch(): React.JSX.Element {
           aria-label="Find a session"
           className="animate-fade-in fixed top-[15vh] left-1/2 z-50 w-[min(38rem,90vw)] -translate-x-1/2 overflow-hidden rounded-lg border border-line-strong bg-surface-overlay shadow-2xl shadow-black/50 outline-none"
         >
-          {open ? <Body onClose={() => { setSearchOpen(false); }} /> : null}
+          {open ? (
+            <Body
+              onClose={() => {
+                setSearchOpen(false);
+              }}
+            />
+          ) : null}
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>

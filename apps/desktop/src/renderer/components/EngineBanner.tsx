@@ -29,7 +29,11 @@ export function EngineBanner(): React.JSX.Element | null {
 
   if (engine.phase === "starting") {
     return (
-      <div className="h-0.5 shrink-0 overflow-hidden bg-surface-raised" role="status" aria-label="Starting the engine">
+      <div
+        className="h-0.5 shrink-0 overflow-hidden bg-surface-raised"
+        role="status"
+        aria-label="Starting the engine"
+      >
         <div className="h-full w-1/3 animate-pulse bg-accent" />
       </div>
     );

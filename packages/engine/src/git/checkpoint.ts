@@ -136,7 +136,8 @@ export class CheckpointManager {
     return this.serialize(async () => {
       // Records are separated by \x01 and fields by \0, because a commit message is
       // multi-line and arbitrary user text — any printable delimiter can appear in a label.
-      const format = "%x01%H%x00%at%x00%s%x00%(trailers:key=Trace-Session,valueonly)%x00%(trailers:key=Trace-Turn,valueonly)";
+      const format =
+        "%x01%H%x00%at%x00%s%x00%(trailers:key=Trace-Session,valueonly)%x00%(trailers:key=Trace-Turn,valueonly)";
       const raw = await runGit(["log", `--format=${format}`, "--no-decorate"], this.opts());
       if (raw.exitCode !== 0) return [];
 
@@ -198,10 +199,7 @@ export class CheckpointManager {
       await git(["add", "-A"], this.opts());
 
       const changes = parseRawDiff(
-        await git(
-          ["diff", "--cached", "--raw", "-z", "--no-renames", checkpointId],
-          this.opts(),
-        ),
+        await git(["diff", "--cached", "--raw", "-z", "--no-renames", checkpointId], this.opts()),
       );
 
       const toRestore: string[] = [];
@@ -255,7 +253,10 @@ export class CheckpointManager {
     if (this.initialized) return;
     await mkdir(this.gitDir, { recursive: true });
 
-    const head = await runGit(["rev-parse", "--git-dir"], { cwd: this.gitDir, gitDir: this.gitDir });
+    const head = await runGit(["rev-parse", "--git-dir"], {
+      cwd: this.gitDir,
+      gitDir: this.gitDir,
+    });
     if (head.exitCode !== 0) {
       // `--bare`, then unset it: a bare repo is the only kind git will create in a
       // directory that is not a work tree, but `core.bare` must be false for

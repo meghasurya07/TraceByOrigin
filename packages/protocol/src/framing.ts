@@ -59,8 +59,7 @@ export class FrameDecoder {
 
   /** Feed raw bytes (stdio) or a string (WebSocket); get back whole frames. */
   push(chunk: Uint8Array | string): DecodedFrame[] {
-    this.buffer +=
-      typeof chunk === "string" ? chunk : this.decoder.decode(chunk, { stream: true });
+    this.buffer += typeof chunk === "string" ? chunk : this.decoder.decode(chunk, { stream: true });
 
     const frames: DecodedFrame[] = [];
     let newlineIndex: number;

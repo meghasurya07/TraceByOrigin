@@ -104,7 +104,11 @@ export interface TraceStore extends AppState {
   deleteSession: (sessionId: string) => Promise<void>;
 
   // -- the turn
-  sendPrompt: (input: { text: string; attachments?: Attachment[]; model?: string }) => Promise<void>;
+  sendPrompt: (input: {
+    text: string;
+    attachments?: Attachment[];
+    model?: string;
+  }) => Promise<void>;
   interrupt: () => Promise<void>;
   steer: (text: string) => Promise<void>;
   resolvePermission: (callId: string, decision: PermissionDecision) => Promise<void>;
@@ -173,9 +177,10 @@ export const useStore = create<TraceStore>()((set, get) => {
 
   const notice = (level: Notice["level"], message: string, action?: Notice["action"]): void => {
     noticeSeq += 1;
-    const entry: Notice = action === undefined
-      ? { id: `n${String(noticeSeq)}`, level, message }
-      : { id: `n${String(noticeSeq)}`, level, message, action };
+    const entry: Notice =
+      action === undefined
+        ? { id: `n${String(noticeSeq)}`, level, message }
+        : { id: `n${String(noticeSeq)}`, level, message, action };
     set((state) => ({ notices: [...state.notices, entry] }));
   };
 
@@ -230,7 +235,8 @@ export const useStore = create<TraceStore>()((set, get) => {
       set((state) => ({
         workspaces,
         activeWorkspaceId:
-          state.activeWorkspaceId !== null && workspaces.some((w) => w.id === state.activeWorkspaceId)
+          state.activeWorkspaceId !== null &&
+          workspaces.some((w) => w.id === state.activeWorkspaceId)
             ? state.activeWorkspaceId
             : (workspaces[0]?.id ?? null),
       }));
@@ -486,7 +492,10 @@ export const useStore = create<TraceStore>()((set, get) => {
         activeSessionId: sessionId,
         views:
           existing === undefined
-            ? { ...state.views, [sessionId]: { ...emptySessionView(summary), hydration: "loading" } }
+            ? {
+                ...state.views,
+                [sessionId]: { ...emptySessionView(summary), hydration: "loading" },
+              }
             : state.views,
       });
 

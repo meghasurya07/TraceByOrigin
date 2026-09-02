@@ -181,7 +181,11 @@ export class TerminalManager {
       log.debug(`Terminal ${id.slice(0, 8)} exited`, { exitCode, signal });
     });
 
-    log.info(`Opened terminal ${id.slice(0, 8)}`, { shell: file, pid: child.pid, cwd: options.cwd });
+    log.info(`Opened terminal ${id.slice(0, 8)}`, {
+      shell: file,
+      pid: child.pid,
+      cwd: options.cwd,
+    });
     return { terminalId: id };
   }
 

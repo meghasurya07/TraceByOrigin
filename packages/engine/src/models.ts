@@ -238,7 +238,6 @@ export function estimateUsd(usage: TokenUsage, model: ModelInfo): number {
 
 /** Fraction of billable input that came from cache. The number to watch in the UI. */
 export function cacheHitRate(usage: TokenUsage): number {
-  const total =
-    usage.inputTokens + usage.cacheCreationInputTokens + usage.cacheReadInputTokens;
+  const total = usage.inputTokens + usage.cacheCreationInputTokens + usage.cacheReadInputTokens;
   return total === 0 ? 0 : usage.cacheReadInputTokens / total;
 }

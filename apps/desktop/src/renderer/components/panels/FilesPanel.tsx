@@ -43,9 +43,7 @@ interface FileState {
   truncated: boolean;
 }
 
-type View =
-  | { kind: "dir"; path: string; entries: DirEntry[] }
-  | { kind: "file"; file: FileState };
+type View = { kind: "dir"; path: string; entries: DirEntry[] } | { kind: "file"; file: FileState };
 
 /** What the panel has been pointed at. `"unknown"` is a ref from a notification. */
 interface Target {
@@ -75,9 +73,7 @@ function kindOf(entry: DirEntry): Target["kind"] {
 /** Directories first, then case-insensitively by name. Symlinks sort with files. */
 function compare(a: DirEntry, b: DirEntry): number {
   const rank = (entry: DirEntry): number => (entry.kind === "directory" ? 0 : 1);
-  return (
-    rank(a) - rank(b) || a.name.localeCompare(b.name, undefined, { sensitivity: "base" })
-  );
+  return rank(a) - rank(b) || a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
 }
 
 async function listDir(path: string): Promise<View> {
@@ -127,9 +123,11 @@ export function FilesPanel(props: { openRef: string | undefined }): React.JSX.El
   // what replaces a reset effect: a path from the previous workspace stops matching and
   // the derivation below falls back to the new root, with no ordering hazard against the
   // effect that consumes `openRef`.
-  const [pointed, setPointed] = useState<{ root: string; path: string; kind: Target["kind"] } | null>(
-    null,
-  );
+  const [pointed, setPointed] = useState<{
+    root: string;
+    path: string;
+    kind: Target["kind"];
+  } | null>(null);
   const [view, setView] = useState<View | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -219,10 +217,7 @@ export function FilesPanel(props: { openRef: string | undefined }): React.JSX.El
             <ChevronLeft size={11} />
             Back
           </button>
-          <span
-            className="min-w-0 flex-1 truncate text-2xs text-fg-muted"
-            title={view.file.path}
-          >
+          <span className="min-w-0 flex-1 truncate text-2xs text-fg-muted" title={view.file.path}>
             {baseName(view.file.path)}
           </span>
           <button

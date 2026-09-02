@@ -237,7 +237,11 @@ export function DiffPanel(props: { openRef: string | undefined }): React.JSX.Ele
           </div>
 
           {selection === null ? null : diffError !== null ? (
-            <PanelMessage Icon={TriangleAlert} title="Could not diff that file" detail={diffError} />
+            <PanelMessage
+              Icon={TriangleAlert}
+              title="Could not diff that file"
+              detail={diffError}
+            />
           ) : diff === null ? (
             <PanelMessage title="Reading the diff…" />
           ) : diff.trim() === "" ? (

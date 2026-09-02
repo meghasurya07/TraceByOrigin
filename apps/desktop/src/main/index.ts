@@ -163,7 +163,8 @@ async function boot(): Promise<void> {
       const client = engine?.client;
       if (client === undefined) return;
       try {
-        if (token === null) await client.request("settings/deleteProviderKey", { provider: "trace" });
+        if (token === null)
+          await client.request("settings/deleteProviderKey", { provider: "trace" });
         else await client.request("settings/setProviderKey", { provider: "trace", apiKey: token });
       } catch (cause) {
         // A dead or restarting engine. `onReady` will re-seed it, so this is worth a log

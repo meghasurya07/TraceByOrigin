@@ -54,7 +54,11 @@ function Chip(props: { attachment: Attachment; onRemove: () => void }): React.JS
   }
 
   const Icon =
-    attachment.type === "file" ? FileText : attachment.type === "directory" ? FolderOpen : TextSelect;
+    attachment.type === "file"
+      ? FileText
+      : attachment.type === "directory"
+        ? FolderOpen
+        : TextSelect;
 
   const label =
     attachment.type === "selection"

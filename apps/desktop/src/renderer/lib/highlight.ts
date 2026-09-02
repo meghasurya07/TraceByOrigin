@@ -155,10 +155,7 @@ const ALIASES: Readonly<Record<string, string>> = {
 
 const LOADED = new Set(
   LANGUAGES.flatMap((registrations) =>
-    registrations.flatMap((registration) => [
-      registration.name,
-      ...(registration.aliases ?? []),
-    ]),
+    registrations.flatMap((registration) => [registration.name, ...(registration.aliases ?? [])]),
   ),
 );
 

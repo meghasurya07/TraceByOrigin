@@ -157,10 +157,7 @@ export const listDirTool: ToolHandler<"list_dir"> = async (input, ctx) => {
   try {
     info = await stat(resolved.absolute);
   } catch {
-    return failure(
-      `Missing ${resolved.relative || "."}`,
-      `Directory not found: ${input.path}.`,
-    );
+    return failure(`Missing ${resolved.relative || "."}`, `Directory not found: ${input.path}.`);
   }
   if (!info.isDirectory()) {
     return failure(

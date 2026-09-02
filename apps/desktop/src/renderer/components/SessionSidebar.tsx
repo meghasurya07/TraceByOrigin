@@ -61,7 +61,11 @@ export function SessionSidebar(): React.JSX.Element {
           </p>
         ) : (
           sessions.map((session) => (
-            <SessionRow key={session.id} session={session} active={session.id === activeSessionId} />
+            <SessionRow
+              key={session.id}
+              session={session}
+              active={session.id === activeSessionId}
+            />
           ))
         )}
       </div>
@@ -134,7 +138,9 @@ function SessionRow(props: { session: SessionSummary; active: boolean }): React.
               title="A turn is running"
             />
           ) : null}
-          <span className={cn("min-w-0 flex-1 truncate text-xs", active ? "text-fg" : "text-fg-muted")}>
+          <span
+            className={cn("min-w-0 flex-1 truncate text-xs", active ? "text-fg" : "text-fg-muted")}
+          >
             {session.title}
           </span>
         </span>
@@ -142,7 +148,9 @@ function SessionRow(props: { session: SessionSummary; active: boolean }): React.
           <span>{formatRelative(session.updatedAt)}</span>
           {session.turnCount > 0 ? <span>· {session.turnCount} turns</span> : null}
           {session.cumulativeCost.estimatedUsd > 0 ? (
-            <span className="ml-auto font-mono">{formatUsd(session.cumulativeCost.estimatedUsd)}</span>
+            <span className="ml-auto font-mono">
+              {formatUsd(session.cumulativeCost.estimatedUsd)}
+            </span>
           ) : null}
         </span>
       </button>
@@ -171,7 +179,15 @@ function SessionRow(props: { session: SessionSummary; active: boolean }): React.
  */
 function TrashGlyph(): React.JSX.Element {
   return (
-    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+    <svg
+      width="11"
+      height="11"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      aria-hidden
+    >
       <path d="M4 6h16M9 6V4h6v2M6 6l1 14h10l1-14" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );

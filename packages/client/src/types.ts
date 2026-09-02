@@ -70,12 +70,7 @@ export type Unsubscribe = () => void;
  * the transcript shows no prompt. That is the intended behaviour of `auto_edit`.
  */
 export type ToolCallStatus =
-  | "streaming_input"
-  | "running"
-  | "awaiting_permission"
-  | "ok"
-  | "error"
-  | "denied";
+  "streaming_input" | "running" | "awaiting_permission" | "ok" | "error" | "denied";
 
 /**
  * One row in the transcript.

@@ -19,7 +19,10 @@ export const PANEL_INPUT =
   "selectable min-w-0 rounded border border-line-strong bg-surface px-2 py-1 font-mono text-2xs text-fg outline-none focus:border-accent placeholder:text-fg-subtle";
 
 /** A single row of controls under the tab strip. Fixed height, never wraps. */
-export function PanelBar(props: { children: React.ReactNode; className?: string }): React.JSX.Element {
+export function PanelBar(props: {
+  children: React.ReactNode;
+  className?: string;
+}): React.JSX.Element {
   return (
     <div
       className={cn(
@@ -63,8 +66,13 @@ export function PanelMessage(props: {
 }
 
 /** Wraps a panel body so it scrolls without the panel itself scrolling. */
-export function PanelBody(props: { children: React.ReactNode; className?: string }): React.JSX.Element {
-  return <div className={cn("min-h-0 flex-1 overflow-auto", props.className)}>{props.children}</div>;
+export function PanelBody(props: {
+  children: React.ReactNode;
+  className?: string;
+}): React.JSX.Element {
+  return (
+    <div className={cn("min-h-0 flex-1 overflow-auto", props.className)}>{props.children}</div>
+  );
 }
 
 /**

@@ -98,7 +98,11 @@ export class SessionStore {
   /** Record one settled entry. Serialized per session; never throws. */
   append(sessionId: string, entry: TranscriptEntry): void {
     this.enqueue(sessionId, async () => {
-      await appendFile(this.file(sessionId, "transcript.jsonl"), `${JSON.stringify(entry)}\n`, "utf8");
+      await appendFile(
+        this.file(sessionId, "transcript.jsonl"),
+        `${JSON.stringify(entry)}\n`,
+        "utf8",
+      );
     });
   }
 
@@ -122,7 +126,8 @@ export class SessionStore {
 
   /** Wait for every queued write on a session to land. Called before shutdown. */
   async drain(sessionId?: string): Promise<void> {
-    const chains = sessionId === undefined ? [...this.chains.values()] : [this.chains.get(sessionId)];
+    const chains =
+      sessionId === undefined ? [...this.chains.values()] : [this.chains.get(sessionId)];
     await Promise.all(chains.map((chain) => chain ?? Promise.resolve()));
   }
 
@@ -329,7 +334,10 @@ export function titleFromPrompt(text: string): string {
 
   // Strip markdown and @-mentions so a pasted heading or file reference does not
   // become the visible title verbatim.
-  const cleaned = firstLine.replace(/^#+\s*/, "").replace(/^[-*]\s+/, "").trim();
+  const cleaned = firstLine
+    .replace(/^#+\s*/, "")
+    .replace(/^[-*]\s+/, "")
+    .trim();
   if (cleaned === "") return DEFAULT_SESSION_TITLE;
   return cleaned.length <= 60 ? cleaned : `${cleaned.slice(0, 59)}…`;
 }

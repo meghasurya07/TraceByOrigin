@@ -67,9 +67,7 @@ export interface DiscoverCommandsOptions {
  * reviewing *that* repo, and it should win over the general one without the user having to
  * remember they wrote a general one.
  */
-export async function discoverCommands(
-  options: DiscoverCommandsOptions,
-): Promise<PromptCommand[]> {
+export async function discoverCommands(options: DiscoverCommandsOptions): Promise<PromptCommand[]> {
   const byName = new Map<string, PromptCommand>();
 
   await collect(path.join(options.home, HOME_SUBDIR), "user", byName);

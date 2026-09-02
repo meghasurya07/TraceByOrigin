@@ -39,11 +39,16 @@ export const ErrorItem = memo(function ErrorItem(props: {
     <div
       className={cn(
         "animate-fade-in my-2 rounded-md border px-3 py-2",
-        item.fatal ? "border-danger/40 bg-danger-muted/30" : "border-warning/40 bg-warning-muted/30",
+        item.fatal
+          ? "border-danger/40 bg-danger-muted/30"
+          : "border-warning/40 bg-warning-muted/30",
       )}
     >
       <div className="flex items-start gap-2">
-        <Icon size={13} className={cn("mt-0.5 shrink-0", item.fatal ? "text-danger" : "text-warning")} />
+        <Icon
+          size={13}
+          className={cn("mt-0.5 shrink-0", item.fatal ? "text-danger" : "text-warning")}
+        />
         <div className="min-w-0 flex-1">
           <p className="selectable text-xs leading-relaxed text-fg">{item.message}</p>
           <p className="mt-0.5 font-mono text-2xs text-fg-subtle">

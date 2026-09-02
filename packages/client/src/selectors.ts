@@ -11,12 +11,7 @@
  * Copyright (c) 2026 Origin AI
  */
 
-import type {
-  ModelInfo,
-  PermissionRequest,
-  ProviderKeyStatus,
-  TurnCost,
-} from "@trace/protocol";
+import type { ModelInfo, PermissionRequest, ProviderKeyStatus, TurnCost } from "@trace/protocol";
 
 import type { AuthState, SessionView, TranscriptItem } from "./types.js";
 

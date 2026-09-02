@@ -124,7 +124,11 @@ export function installApplicationMenu(options: MenuOptions): void {
               { role: "delete" as const },
               { role: "selectAll" as const },
             ]
-          : [{ role: "delete" as const }, { type: "separator" as const }, { role: "selectAll" as const }]),
+          : [
+              { role: "delete" as const },
+              { type: "separator" as const },
+              { role: "selectAll" as const },
+            ]),
       ],
     },
 
@@ -152,17 +156,15 @@ export function installApplicationMenu(options: MenuOptions): void {
             { label: "Pull Request", accelerator: "CmdOrCtrl+4", target: "pr" },
             { label: "Browser", accelerator: "CmdOrCtrl+5", target: "browser" },
             { label: "Terminal", accelerator: "CmdOrCtrl+6", target: "terminal" },
-          ].map(
-            ({ label, accelerator, target }): MenuItemConstructorOptions => ({
-              label,
-              accelerator,
-              click: () =>
-                send({
-                  kind: "open_work_panel",
-                  target: target as "files" | "diff" | "canvas" | "pr" | "browser" | "terminal",
-                }),
-            }),
-          ),
+          ].map(({ label, accelerator, target }): MenuItemConstructorOptions => ({
+            label,
+            accelerator,
+            click: () =>
+              send({
+                kind: "open_work_panel",
+                target: target as "files" | "diff" | "canvas" | "pr" | "browser" | "terminal",
+              }),
+          })),
         },
         { type: "separator" },
         {

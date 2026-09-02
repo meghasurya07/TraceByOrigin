@@ -44,13 +44,13 @@ comments in `pnpm-workspace.yaml` for why each one is on or off. Then bring your
 **Settings → Models**. Keys are held in the OS keychain by the main process and never cross
 the protocol boundary or reach disk in plaintext.
 
-| Command | |
-|---|---|
-| `pnpm dev` | Run the desktop app against the local engine |
-| `pnpm typecheck` | `tsc -b` across all four projects |
-| `pnpm test` | Per-package test scripts |
-| `pnpm format` | Prettier |
-| `pnpm --filter @trace/desktop package` | Build an installer for the host platform |
+| Command                                |                                              |
+| -------------------------------------- | -------------------------------------------- |
+| `pnpm dev`                             | Run the desktop app against the local engine |
+| `pnpm typecheck`                       | `tsc -b` across all four projects            |
+| `pnpm test`                            | Per-package test scripts                     |
+| `pnpm format`                          | Prettier                                     |
+| `pnpm --filter @trace/desktop package` | Build an installer for the host platform     |
 
 ## What works
 

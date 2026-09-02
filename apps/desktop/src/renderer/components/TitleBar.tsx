@@ -99,13 +99,13 @@ export function TitleBar(): React.JSX.Element {
             label={maximized ? "Restore" : "Maximize"}
             onClick={() => void bridge.windowControl("toggle_maximize")}
           >
-            {maximized ? <Maximize2 size={11} strokeWidth={1.5} /> : <Square size={11} strokeWidth={1.5} />}
+            {maximized ? (
+              <Maximize2 size={11} strokeWidth={1.5} />
+            ) : (
+              <Square size={11} strokeWidth={1.5} />
+            )}
           </WindowButton>
-          <WindowButton
-            label="Close"
-            danger
-            onClick={() => void bridge.windowControl("close")}
-          >
+          <WindowButton label="Close" danger onClick={() => void bridge.windowControl("close")}>
             <X size={14} strokeWidth={1.5} />
           </WindowButton>
         </div>
@@ -160,7 +160,9 @@ function WindowButton(props: {
       onClick={props.onClick}
       className={cn(
         "flex h-full w-[46px] items-center justify-center text-fg-muted transition-colors",
-        props.danger === true ? "hover:bg-danger hover:text-white" : "hover:bg-surface-hover hover:text-fg",
+        props.danger === true
+          ? "hover:bg-danger hover:text-white"
+          : "hover:bg-surface-hover hover:text-fg",
       )}
     >
       {props.children}

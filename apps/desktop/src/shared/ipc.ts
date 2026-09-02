@@ -148,11 +148,7 @@ export interface HostInfo {
 
 /** Frameless-window controls, since the renderer draws its own title bar. */
 export type WindowControl =
-  | "minimize"
-  | "toggle_maximize"
-  | "close"
-  | "toggle_full_screen"
-  | "toggle_dev_tools";
+  "minimize" | "toggle_maximize" | "close" | "toggle_full_screen" | "toggle_dev_tools";
 
 export interface WindowStatePayload {
   maximized: boolean;

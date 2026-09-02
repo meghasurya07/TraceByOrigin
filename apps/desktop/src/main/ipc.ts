@@ -92,7 +92,8 @@ export function registerIpc(context: IpcContext): void {
 
   handle(IPC.hostInfo, async (): Promise<HostInfo> => {
     return {
-      platform: process.platform === "darwin" ? "darwin" : process.platform === "win32" ? "win32" : "linux",
+      platform:
+        process.platform === "darwin" ? "darwin" : process.platform === "win32" ? "win32" : "linux",
       appVersion: app.getVersion(),
       electronVersion: process.versions.electron ?? "",
       chromeVersion: process.versions.chrome ?? "",
@@ -113,10 +114,7 @@ export function registerIpc(context: IpcContext): void {
       // The interesting refusals are `file:` (opens anything on disk) and any custom
       // scheme a hostile repository could have registered a handler for.
       context.onLog?.(`[ipc] refused to open ${parsed.protocol} link`);
-      throw new RpcError(
-        ErrorCode.InvalidParams,
-        `Trace will not open ${parsed.protocol} links.`,
-      );
+      throw new RpcError(ErrorCode.InvalidParams, `Trace will not open ${parsed.protocol} links.`);
     }
     await shell.openExternal(parsed.toString());
     return null;
@@ -136,7 +134,7 @@ export function registerIpc(context: IpcContext): void {
         ? await dialog.showOpenDialog({ ...options, properties: [...options.properties] })
         : await dialog.showOpenDialog(window, { ...options, properties: [...options.properties] });
 
-    return result.canceled ? null : result.filePaths[0] ?? null;
+    return result.canceled ? null : (result.filePaths[0] ?? null);
   });
 
   handle(IPC.hostRevealPath, async (_event, params: { path: string }) => {

@@ -149,13 +149,12 @@ export const DiffView = memo(function DiffView(props: {
   const hidden = rows.length - shown.length;
 
   return (
-    <div className={cn("overflow-hidden rounded-md border border-line bg-surface", props.className)}>
+    <div
+      className={cn("overflow-hidden rounded-md border border-line bg-surface", props.className)}
+    >
       <div className="overflow-x-auto font-mono text-2xs leading-[1.5]">
         {shown.map((row, index) => (
-          <div
-            key={`r${String(index)}`}
-            className={cn("flex whitespace-pre", ROW_STYLE[row.kind])}
-          >
+          <div key={`r${String(index)}`} className={cn("flex whitespace-pre", ROW_STYLE[row.kind])}>
             <span className="w-9 shrink-0 pr-1 text-right text-fg-subtle/70 select-none">
               {row.oldLine === undefined ? "" : String(row.oldLine)}
             </span>

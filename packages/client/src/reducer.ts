@@ -83,8 +83,7 @@ function addCost(a: TurnCost, b: TurnCost): TurnCost {
     usage: {
       inputTokens: a.usage.inputTokens + b.usage.inputTokens,
       outputTokens: a.usage.outputTokens + b.usage.outputTokens,
-      cacheCreationInputTokens:
-        a.usage.cacheCreationInputTokens + b.usage.cacheCreationInputTokens,
+      cacheCreationInputTokens: a.usage.cacheCreationInputTokens + b.usage.cacheCreationInputTokens,
       cacheReadInputTokens: a.usage.cacheReadInputTokens + b.usage.cacheReadInputTokens,
     },
     requests: a.requests + b.requests,
@@ -479,7 +478,8 @@ export function applyEvent(view: SessionView, event: SessionEvent): SessionView 
 
     case "turn_completed": {
       const id = itemIdFor.turnSummary(event.turnId);
-      const startedAt = view.live?.turnId === event.turnId ? view.live.startedAt : event.completedAt;
+      const startedAt =
+        view.live?.turnId === event.turnId ? view.live.startedAt : event.completedAt;
 
       // Close every open block in one pass. A stream that ends without its final
       // delta would otherwise leave a caret blinking forever under the last

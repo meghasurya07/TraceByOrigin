@@ -46,7 +46,8 @@ function NoticeRow({ notice }: { notice: Notice }): React.JSX.Element {
   const restartEngine = useStore((state) => state.restartEngine);
   const createSession = useStore((state) => state.createSession);
 
-  const Icon = notice.level === "error" ? AlertTriangle : notice.level === "warn" ? TriangleAlert : Info;
+  const Icon =
+    notice.level === "error" ? AlertTriangle : notice.level === "warn" ? TriangleAlert : Info;
   // Pulled into a local so the narrowing survives into the click handler — TypeScript
   // discards a property-access narrowing at a function boundary.
   const action = notice.action;
@@ -82,10 +83,15 @@ function NoticeRow({ notice }: { notice: Notice }): React.JSX.Element {
   return (
     <div
       role={notice.level === "error" ? "alert" : "status"}
-      className={cn("flex items-start gap-2 border-b px-3 py-1.5 text-xs", LEVEL_STYLE[notice.level])}
+      className={cn(
+        "flex items-start gap-2 border-b px-3 py-1.5 text-xs",
+        LEVEL_STYLE[notice.level],
+      )}
     >
       <Icon size={13} className="mt-px shrink-0" />
-      <span className="selectable min-w-0 flex-1 leading-relaxed break-words">{notice.message}</span>
+      <span className="selectable min-w-0 flex-1 leading-relaxed break-words">
+        {notice.message}
+      </span>
 
       {action === undefined ? null : (
         <button

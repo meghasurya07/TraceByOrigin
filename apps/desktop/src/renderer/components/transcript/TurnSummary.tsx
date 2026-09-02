@@ -70,7 +70,10 @@ export const TurnSummary = memo(function TurnSummary(props: {
       )}
 
       {stat === null ? null : (
-        <span className="shrink-0 font-mono" title={`${String(item.changes.length)} file(s) changed`}>
+        <span
+          className="shrink-0 font-mono"
+          title={`${String(item.changes.length)} file(s) changed`}
+        >
           {formatDiffStat(stat.added, stat.removed)}
         </span>
       )}

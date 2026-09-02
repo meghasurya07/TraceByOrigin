@@ -170,7 +170,11 @@ export async function textSearch(
   // the forgiving default without making an intentional `TODO` search noisy.
   args.push(options.caseSensitive === true ? "--case-sensitive" : "--smart-case");
   if (options.include) args.push("--glob", options.include);
-  args.push(options.isRegex === false ? "--fixed-strings" : "--regexp", options.pattern, searchRoot);
+  args.push(
+    options.isRegex === false ? "--fixed-strings" : "--regexp",
+    options.pattern,
+    searchRoot,
+  );
 
   const stdout = await runRipgrep(args, workspace.root, options.signal);
 

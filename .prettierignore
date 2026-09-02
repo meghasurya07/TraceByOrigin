@@ -1,0 +1,15 @@
+# Build output and dependencies.
+node_modules/
+dist/
+out/
+release/
+*.tsbuildinfo
+
+# Lockfile — pnpm writes it, pnpm reads it, and reflowing it invites a merge
+# conflict on a file no human edits.
+pnpm-lock.yaml
+
+# Deep-research dumps. These are captured verbatim as reference material; the
+# point of them is that they are what the source said, so reformatting them
+# makes a diff that means nothing and loses the provenance.
+research/

@@ -64,9 +64,7 @@ export function WorkspacePicker(): React.JSX.Element {
         <FolderOpen size={13} className="shrink-0" />
         <span className="truncate">{active?.name ?? "Workspaces"}</span>
         {active?.currentBranch === undefined ? null : (
-          <span className="shrink-0 font-mono text-2xs text-fg-subtle">
-            {active.currentBranch}
-          </span>
+          <span className="shrink-0 font-mono text-2xs text-fg-subtle">{active.currentBranch}</span>
         )}
         <IndexDot
           status={active?.indexStatus ?? "absent"}
@@ -90,7 +88,10 @@ export function WorkspacePicker(): React.JSX.Element {
               >
                 <Check
                   size={12}
-                  className={cn("shrink-0", workspace.id === activeWorkspaceId ? "text-accent-fg" : "opacity-0")}
+                  className={cn(
+                    "shrink-0",
+                    workspace.id === activeWorkspaceId ? "text-accent-fg" : "opacity-0",
+                  )}
                 />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-fg">{workspace.name}</span>
@@ -110,7 +111,10 @@ export function WorkspacePicker(): React.JSX.Element {
                   >
                     <RefreshCw size={11} className={busy ? "animate-spin" : undefined} />
                   </RowAction>
-                  <RowAction label="Close workspace" onClick={() => void closeWorkspace(workspace.id)}>
+                  <RowAction
+                    label="Close workspace"
+                    onClick={() => void closeWorkspace(workspace.id)}
+                  >
                     <X size={11} />
                   </RowAction>
                 </span>
@@ -173,10 +177,19 @@ function IndexDot(props: {
     : props.status === "building"
       ? { colour: "bg-accent-fg animate-pulse", title: "Building the semantic index…" }
       : props.status === "stale"
-        ? { colour: "bg-warning", title: "The index is out of date — codebase search may miss recent edits." }
+        ? {
+            colour: "bg-warning",
+            title: "The index is out of date — codebase search may miss recent edits.",
+          }
         : props.status === "failed"
-          ? { colour: "bg-danger", title: "The index failed to build. Codebase search is unavailable." }
-          : { colour: "bg-fg-subtle", title: "No semantic index yet. Codebase search is unavailable." };
+          ? {
+              colour: "bg-danger",
+              title: "The index failed to build. Codebase search is unavailable.",
+            }
+          : {
+              colour: "bg-fg-subtle",
+              title: "No semantic index yet. Codebase search is unavailable.",
+            };
 
   return <span className={cn("size-1.5 shrink-0 rounded-full", colour)} title={title} />;
 }

@@ -54,14 +54,10 @@ export interface JsonRpcErrorResponse {
 }
 
 export type JsonRpcResponse<TResult = unknown> =
-  | JsonRpcSuccessResponse<TResult>
-  | JsonRpcErrorResponse;
+  JsonRpcSuccessResponse<TResult> | JsonRpcErrorResponse;
 
 export type JsonRpcMessage =
-  | JsonRpcRequest
-  | JsonRpcNotification
-  | JsonRpcSuccessResponse
-  | JsonRpcErrorResponse;
+  JsonRpcRequest | JsonRpcNotification | JsonRpcSuccessResponse | JsonRpcErrorResponse;
 
 /**
  * Error codes. -32768..-32000 is reserved by the JSON-RPC spec; everything Trace

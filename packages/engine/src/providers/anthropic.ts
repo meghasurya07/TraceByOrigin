@@ -311,10 +311,7 @@ export class AnthropicProvider {
  * without noticing, since a destroyed cache is invisible except in the bill.
  */
 export function buildRequest(spec: RequestSpec): MessageCreateParamsStreaming {
-  const maxTokens = Math.min(
-    spec.maxTokens ?? DEFAULT_MAX_TOKENS,
-    spec.model.maxOutputTokens,
-  );
+  const maxTokens = Math.min(spec.maxTokens ?? DEFAULT_MAX_TOKENS, spec.model.maxOutputTokens);
 
   // Breakpoint 1: end of system, which covers tools as well.
   const system: TextBlockParam[] = [

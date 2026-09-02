@@ -55,10 +55,7 @@ export const runTerminalCmdTool: ToolHandler<"run_terminal_cmd"> = async (input,
   // this check, is what stands between the model and a destructive command.
   const cwd = input.cwd ? path.resolve(root, input.cwd) : root;
 
-  const timeout = Math.min(
-    Math.max(input.timeout_ms ?? DEFAULT_TIMEOUT_MS, 1_000),
-    MAX_TIMEOUT_MS,
-  );
+  const timeout = Math.min(Math.max(input.timeout_ms ?? DEFAULT_TIMEOUT_MS, 1_000), MAX_TIMEOUT_MS);
   const shell = resolveShell();
   const startedAt = Date.now();
 
@@ -118,7 +115,11 @@ export const runTerminalCmdTool: ToolHandler<"run_terminal_cmd"> = async (input,
     // rather than burn the full timeout looking like a hang.
     child.stdin?.end();
 
-    const finish = (extra: { exitCode: number | null; signal: NodeJS.Signals | null; spawnError?: Error }): void => {
+    const finish = (extra: {
+      exitCode: number | null;
+      signal: NodeJS.Signals | null;
+      spawnError?: Error;
+    }): void => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);

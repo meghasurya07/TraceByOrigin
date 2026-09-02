@@ -84,7 +84,10 @@ export function openVault(userDataDir: string): Vault {
       // Written synchronously and in full. It is a handful of bytes, and the one
       // caller that matters runs during sign-out, where an async write racing a quit
       // would leave the token on disk after the user asked us to forget it.
-      writeFileSync(file, `${JSON.stringify(stored, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+      writeFileSync(file, `${JSON.stringify(stored, null, 2)}\n`, {
+        encoding: "utf8",
+        mode: 0o600,
+      });
     } catch {
       // Nothing useful to do. The token stays in memory for this session.
     }

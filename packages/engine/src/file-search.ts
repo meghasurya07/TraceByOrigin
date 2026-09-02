@@ -348,8 +348,7 @@ function byDepthThenPath(a: Entry, b: Entry): number {
  */
 function scoreEntry(query: string, entry: Entry): number | null {
   const whole = alignAndScore(query, entry, 0);
-  const inName =
-    entry.nameStart === 0 ? null : alignAndScore(query, entry, entry.nameStart);
+  const inName = entry.nameStart === 0 ? null : alignAndScore(query, entry, entry.nameStart);
 
   let best: number;
   if (inName === null) {
@@ -440,8 +439,7 @@ function isBoundary(target: string, index: number): boolean {
   ) {
     return true;
   }
-  const wasLowerOrDigit =
-    (previous >= 97 && previous <= 122) || (previous >= 48 && previous <= 57);
+  const wasLowerOrDigit = (previous >= 97 && previous <= 122) || (previous >= 48 && previous <= 57);
   const current = target.charCodeAt(index);
   return wasLowerOrDigit && current >= 65 && current <= 90;
 }

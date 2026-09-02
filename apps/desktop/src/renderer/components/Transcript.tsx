@@ -54,7 +54,9 @@ const ESTIMATED_ROW = 64;
 
 export function Transcript(): React.JSX.Element {
   const sessionId = useStore((state) => state.activeSessionId);
-  const view = useStore((state) => (state.activeSessionId === null ? undefined : state.views[state.activeSessionId]));
+  const view = useStore((state) =>
+    state.activeSessionId === null ? undefined : state.views[state.activeSessionId],
+  );
   const showThinking = useStore((state) => state.settings?.showThinking ?? true);
 
   if (sessionId === null || view === undefined) return <NoSession />;
@@ -76,10 +78,7 @@ const List = memo(function List(props: {
   showThinking: boolean;
 }): React.JSX.Element {
   const { view, showThinking } = props;
-  const items = useMemo(
-    () => visibleItems(view, { showThinking }),
-    [view, showThinking],
-  );
+  const items = useMemo(() => visibleItems(view, { showThinking }), [view, showThinking]);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const [atBottom, setAtBottom] = useState(true);
@@ -133,7 +132,10 @@ const List = memo(function List(props: {
     <div className="relative min-h-0 flex-1">
       <div ref={scrollRef} onScroll={onScroll} className="h-full overflow-y-auto overflow-x-hidden">
         <div className="mx-auto w-full max-w-3xl px-4 py-3">
-          <div className="relative w-full" style={{ height: `${String(virtualizer.getTotalSize())}px` }}>
+          <div
+            className="relative w-full"
+            style={{ height: `${String(virtualizer.getTotalSize())}px` }}
+          >
             {rows.map((row) => {
               const item = items[row.index];
               if (item === undefined) return null;
@@ -272,8 +274,8 @@ function Empty(): React.JSX.Element {
   return (
     <div className="flex min-h-0 flex-1 items-end justify-center overflow-hidden px-6 pb-6">
       <p className="max-w-md text-center text-xs leading-relaxed text-fg-subtle">
-        Describe what you want changed. Trace reads the code it needs, and asks before it
-        writes or runs anything.
+        Describe what you want changed. Trace reads the code it needs, and asks before it writes or
+        runs anything.
       </p>
     </div>
   );

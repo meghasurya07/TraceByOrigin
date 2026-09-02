@@ -17,7 +17,9 @@
     "dev": "pnpm --filter @trace/desktop dev",
     "engine": "pnpm --filter @trace/engine start",
     "lint": "eslint . --ext .ts,.tsx",
-    "format": "prettier --write \"**/*.{ts,tsx,json,md,css}\"",
+    "//format": "`.` rather than a glob: the glob omitted `.mjs`, so the two scripts that hold the build's own checks — the engine smoke test and the contrast test — were the only files Prettier never saw. `.prettierignore` decides what is out of scope now.",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
     "test": "pnpm -r test"
   },
   "devDependencies": {

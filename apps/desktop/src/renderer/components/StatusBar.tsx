@@ -39,7 +39,9 @@ export function StatusBar(): React.JSX.Element {
 
   const modelId = live?.model ?? view?.summary.model ?? settings?.defaultModel ?? null;
   const modelName =
-    modelId === null ? null : (models.find((model) => model.id === modelId)?.displayName ?? modelId);
+    modelId === null
+      ? null
+      : (models.find((model) => model.id === modelId)?.displayName ?? modelId);
 
   const progress = activeWorkspaceId === null ? undefined : indexing[activeWorkspaceId];
   const indexBusy = progress !== undefined && progress.phase !== "done";
@@ -62,7 +64,11 @@ export function StatusBar(): React.JSX.Element {
       ) : (
         <span className="flex items-center gap-1.5">
           <Cpu size={10} />
-          {engine.phase === "starting" ? "Starting…" : engine.phase === "restarting" ? "Restarting…" : "Offline"}
+          {engine.phase === "starting"
+            ? "Starting…"
+            : engine.phase === "restarting"
+              ? "Restarting…"
+              : "Offline"}
         </span>
       )}
 
@@ -79,7 +85,10 @@ export function StatusBar(): React.JSX.Element {
           monitored, model is the thing being changed. */}
       {cost === null ? null : (
         <>
-          <span className="flex items-center gap-1.5 font-mono" title="Tokens in / out this session">
+          <span
+            className="flex items-center gap-1.5 font-mono"
+            title="Tokens in / out this session"
+          >
             <Zap size={10} />
             {formatTokens(cost.usage.inputTokens)} in · {formatTokens(cost.usage.outputTokens)} out
             {cost.usage.cacheReadInputTokens > 0
@@ -87,7 +96,10 @@ export function StatusBar(): React.JSX.Element {
               : ""}
           </span>
           <span
-            className={cn("flex items-center gap-1 font-mono", cost.estimatedUsd > 0 && "text-fg-muted")}
+            className={cn(
+              "flex items-center gap-1 font-mono",
+              cost.estimatedUsd > 0 && "text-fg-muted",
+            )}
             title="Estimated cost of this session, from the model's published rates"
           >
             <CircleDollarSign size={10} />

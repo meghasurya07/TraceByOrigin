@@ -42,7 +42,9 @@ export class ErrorBoundary extends Component<Props, State> {
     return (
       <div className="flex h-full w-full flex-col items-center justify-center gap-4 bg-surface p-8">
         <div className="w-full max-w-2xl rounded-lg border border-danger/40 bg-danger-muted/40 p-5">
-          <h1 className="text-sm font-semibold text-fg">Trace hit an error it could not recover from.</h1>
+          <h1 className="text-sm font-semibold text-fg">
+            Trace hit an error it could not recover from.
+          </h1>
           <p className="mt-1 text-xs text-fg-muted">
             Your sessions are on disk and were not affected. Reloading the window is safe.
           </p>

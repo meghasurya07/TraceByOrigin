@@ -58,7 +58,9 @@ function Row({ todo }: { todo: TodoItem }): React.JSX.Element {
       <span className="mt-0.5 shrink-0">
         <Mark status={todo.status} />
       </span>
-      <span className={cn("selectable min-w-0 flex-1 text-xs leading-relaxed", TEXT_STYLE[todo.status])}>
+      <span
+        className={cn("selectable min-w-0 flex-1 text-xs leading-relaxed", TEXT_STYLE[todo.status])}
+      >
         {todo.content}
       </span>
     </li>

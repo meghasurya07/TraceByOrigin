@@ -43,7 +43,8 @@ export function formatTokens(count: number): string {
 
 /** A context window, for the picker: `200k`, `1M`. */
 export function formatContext(tokens: number): string {
-  if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(tokens % 1_000_000 === 0 ? 0 : 1)}M`;
+  if (tokens >= 1_000_000)
+    return `${(tokens / 1_000_000).toFixed(tokens % 1_000_000 === 0 ? 0 : 1)}M`;
   return `${Math.round(tokens / 1_000)}k`;
 }
 
