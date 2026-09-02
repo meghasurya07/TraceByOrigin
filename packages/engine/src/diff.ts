@@ -24,6 +24,25 @@ export interface DiffStats {
   removed: number;
 }
 
+/**
+ * One hunk, before it is flattened to text.
+ *
+ * The rendered form — what `unifiedDiff` returns — is fine for showing a change and
+ * useless for undoing one, because getting a hunk back out of a diff means re-parsing
+ * text this module just finished generating. `diffHunks` hands over the same hunks as
+ * data so a review surface can address them individually, and `revertHunk` reverses one
+ * without any text round trip.
+ */
+export interface Hunk {
+  /** Position in the file's hunk list. Shifts as soon as any hunk is applied or reverted. */
+  index: number;
+  header: string;
+  /** Body lines, each prefixed with a space, `-`, or `+`. */
+  lines: string[];
+  added: number;
+  removed: number;
+}
+
 type Op = { kind: "eq" | "del" | "ins"; line: string };
 
 function splitLines(text: string): string[] {
@@ -178,8 +197,16 @@ function lcsOps(a: string[], b: string[]): Op[] {
 
 /** Group changed ops into hunks, padding each with `context` unchanged lines. */
 function buildHunks(ops: Op[], context: number): string[] {
-  // Annotate every op with its 1-indexed position in each side.
-  const positioned: { op: Op; oldLine: number; newLine: number }[] = [];
+  const positioned = positionOps(ops);
+  return groupChanges(positioned, context).map((group) => {
+    const hunk = renderHunk(positioned, group, context, 0);
+    return `${hunk.header}\n${hunk.lines.join("\n")}\n`;
+  });
+}
+
+/** Every op with its 1-indexed position on each side. */
+function positionOps(ops: readonly Op[]): Positioned[] {
+  const positioned: Positioned[] = [];
   let oldLine = 1;
   let newLine = 1;
   for (const op of ops) {
@@ -187,54 +214,151 @@ function buildHunks(ops: Op[], context: number): string[] {
     if (op.kind !== "ins") oldLine++;
     if (op.kind !== "del") newLine++;
   }
+  return positioned;
+}
 
-  const changedIndexes = positioned
-    .map((entry, index) => (entry.op.kind === "eq" ? -1 : index))
-    .filter((index) => index >= 0);
-  if (changedIndexes.length === 0) return [];
+interface Positioned {
+  op: Op;
+  oldLine: number;
+  newLine: number;
+}
 
-  // Merge changes closer than 2·context together, so adjacent edits share a hunk
-  // instead of emitting overlapping context.
-  const groups: { from: number; to: number }[] = [];
-  for (const index of changedIndexes) {
+/**
+ * The index ranges of changed ops, merged when they are closer than `2·context`.
+ *
+ * Merging is why `context` has to be the same on both sides of a round trip: a hunk index
+ * from a three-line-context list does not name the same lines in a one-line-context list.
+ * Adjacent edits share a hunk instead of emitting overlapping context.
+ */
+function groupChanges(positioned: readonly Positioned[], context: number): Group[] {
+  const groups: Group[] = [];
+  for (let index = 0; index < positioned.length; index++) {
+    if (positioned[index]!.op.kind === "eq") continue;
     const last = groups[groups.length - 1];
-    if (last && index - last.to <= context * 2) {
-      last.to = index;
+    if (last && index - last.to <= context * 2) last.to = index;
+    else groups.push({ from: index, to: index });
+  }
+  return groups;
+}
+
+interface Group {
+  /** First changed op. The rendered hunk starts `context` lines before it. */
+  from: number;
+  to: number;
+}
+
+function renderHunk(
+  positioned: readonly Positioned[],
+  group: Group,
+  context: number,
+  index: number,
+): Hunk {
+  const from = Math.max(0, group.from - context);
+  const to = Math.min(positioned.length - 1, group.to + context);
+  const slice = positioned.slice(from, to + 1);
+
+  let oldCount = 0;
+  let newCount = 0;
+  let added = 0;
+  let removed = 0;
+  const lines: string[] = [];
+  for (const { op } of slice) {
+    if (op.kind === "eq") {
+      oldCount++;
+      newCount++;
+      lines.push(` ${op.line}`);
+    } else if (op.kind === "del") {
+      oldCount++;
+      removed++;
+      lines.push(`-${op.line}`);
     } else {
-      groups.push({ from: index, to: index });
+      newCount++;
+      added++;
+      lines.push(`+${op.line}`);
     }
   }
 
-  return groups.map((group) => {
-    const from = Math.max(0, group.from - context);
-    const to = Math.min(positioned.length - 1, group.to + context);
-    const slice = positioned.slice(from, to + 1);
+  const first = slice[0]!;
+  // A zero-length side is reported at the line *before* the insertion point,
+  // which is what git does and what patch(1) expects.
+  const oldStart = oldCount === 0 ? Math.max(0, first.oldLine - 1) : first.oldLine;
+  const newStart = newCount === 0 ? Math.max(0, first.newLine - 1) : first.newLine;
 
-    let oldCount = 0;
-    let newCount = 0;
-    const body: string[] = [];
-    for (const { op } of slice) {
-      if (op.kind === "eq") {
-        oldCount++;
-        newCount++;
-        body.push(` ${op.line}`);
-      } else if (op.kind === "del") {
-        oldCount++;
-        body.push(`-${op.line}`);
-      } else {
-        newCount++;
-        body.push(`+${op.line}`);
-      }
-    }
+  return {
+    index,
+    header: `@@ -${oldStart},${oldCount} +${newStart},${newCount} @@`,
+    lines,
+    added,
+    removed,
+  };
+}
 
-    const first = slice[0]!;
-    // A zero-length side is reported at the line *before* the insertion point,
-    // which is what git does and what patch(1) expects.
-    const oldStart = oldCount === 0 ? Math.max(0, first.oldLine - 1) : first.oldLine;
-    const newStart = newCount === 0 ? Math.max(0, first.newLine - 1) : first.newLine;
+/**
+ * The same hunks `unifiedDiff` would render, as data.
+ *
+ * Empty when the texts are identical. `context` must match whatever is later passed to
+ * {@link revertHunk}, since it decides which changes merge into one hunk.
+ */
+export function diffHunks(
+  oldText: string,
+  newText: string,
+  options: { context?: number } = {},
+): Hunk[] {
+  if (oldText === newText) return [];
+  const context = options.context ?? 3;
+  const positioned = positionOps(diffOps(...diffLines(oldText, newText)));
+  return groupChanges(positioned, context).map((group, index) =>
+    renderHunk(positioned, group, context, index),
+  );
+}
 
-    return `@@ -${oldStart},${oldCount} +${newStart},${newCount} @@\n${body.join("\n")}\n`;
-  });
+/**
+ * `newText` with one hunk put back the way `oldText` had it.
+ *
+ * Returns null when there is no such hunk, or when `expectHeader` does not match the hunk
+ * now at that index — which is the guard against a stale review list. A client holding
+ * hunk 2 of a file that has since been edited would otherwise revert whatever lines had
+ * moved into second place.
+ *
+ * Reversing ops rather than reverse-applying patch text: inside the hunk the old side's
+ * lines are kept and the new side's dropped, outside it the reverse, and the result is the
+ * file. No patch parser, no fuzz factor, no chance of applying at the wrong offset.
+ */
+export function revertHunk(
+  oldText: string,
+  newText: string,
+  index: number,
+  options: { context?: number; expectHeader?: string } = {},
+): string | null {
+  if (oldText === newText) return null;
+  const context = options.context ?? 3;
+  const positioned = positionOps(diffOps(...diffLines(oldText, newText)));
+  const group = groupChanges(positioned, context)[index];
+  if (group === undefined) return null;
+  if (
+    options.expectHeader !== undefined &&
+    renderHunk(positioned, group, context, index).header !== options.expectHeader
+  ) {
+    return null;
+  }
+
+  const kept: string[] = [];
+  for (let i = 0; i < positioned.length; i++) {
+    const { op } = positioned[i]!;
+    // Inside the reverted range the old side wins, so deletions come back and insertions
+    // are dropped. Outside it the new side wins, which is what leaves every other hunk
+    // exactly as the agent left it.
+    const inside = i >= group.from && i <= group.to;
+    if (inside ? op.kind !== "ins" : op.kind !== "del") kept.push(op.line);
+  }
+  const rebuilt = kept.join("\n");
+
+  // `diffLines` drops one side's trailing-newline phantom when the other side is empty,
+  // which is right for rendering and wrong for rebuilding a file: reverting the deletion
+  // of `a\nb\n` would otherwise hand back `a\nb`. Only this direction can lose anything —
+  // the other reverts to `""` — and in both the whole file is a single hunk, so putting
+  // the newline back here is exact rather than a guess.
+  return newText === "" && oldText.endsWith("\n") && rebuilt !== "" ? `${rebuilt}\n` : rebuilt;
 }
 
 /**

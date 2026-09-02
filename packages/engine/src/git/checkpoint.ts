@@ -33,7 +33,7 @@ import path from "node:path";
 import { ALWAYS_IGNORED_DIRS, toPosix } from "../paths.js";
 import { Logger } from "../logger.js";
 import type { Workspace } from "../workspace.js";
-import { git, gitAvailable, runGit } from "./run.js";
+import { git, gitAvailable, runGit, runGitBytes } from "./run.js";
 import { operationInProgress } from "./status.js";
 
 const log = new Logger("checkpoint");
@@ -69,6 +69,13 @@ export interface RestoreResult {
   safetyCheckpointId: string | null;
 }
 
+/** One path that differs between a checkpoint and the work tree. Status is relative to the checkpoint. */
+export interface CheckpointChange {
+  /** Workspace-relative, forward slashes. */
+  path: string;
+  status: "added" | "modified" | "deleted";
+}
+
 export class CheckpointManager {
   private readonly gitDir: string;
   /**
@@ -79,7 +86,15 @@ export class CheckpointManager {
    * holding half of each turn's work.
    */
   private queue: Promise<unknown> = Promise.resolve();
-  private initialized = false;
+  /**
+   * The one-time setup, memoized as a promise rather than a `done` flag.
+   *
+   * A flag is only enough while every caller holds {@link serialize}'s lock. `fileAt` does
+   * not — it reads an immutable object and deliberately runs concurrently — so two first
+   * calls can arrive together, and a flag set at the *end* of setup lets both of them run
+   * `git init`. Awaiting the same promise makes the second one wait instead.
+   */
+  private ready: Promise<void> | null = null;
 
   constructor(
     private readonly workspace: Workspace,
@@ -186,21 +201,7 @@ export class CheckpointManager {
     });
 
     return this.serialize(async () => {
-      await this.ensureRepo();
-      // Verify before doing anything destructive: a sha from a stale UI would otherwise
-      // fail halfway through, having already deleted files.
-      const kind = await runGit(["cat-file", "-t", checkpointId], this.opts());
-      if (kind.exitCode !== 0 || kind.stdout.trim() !== "commit") {
-        throw new Error(`No such checkpoint: ${checkpointId}`);
-      }
-
-      // Sync the index to the work tree so the diff below compares the checkpoint against
-      // what is on disk right now, not against whatever the last checkpoint captured.
-      await git(["add", "-A"], this.opts());
-
-      const changes = parseRawDiff(
-        await git(["diff", "--cached", "--raw", "-z", "--no-renames", checkpointId], this.opts()),
-      );
+      const changes = await this.rawChangesFrom(checkpointId);
 
       const toRestore: string[] = [];
       const toDelete: string[] = [];
@@ -231,6 +232,78 @@ export class CheckpointManager {
     });
   }
 
+  /**
+   * Which paths differ between `checkpointId` and the work tree right now.
+   *
+   * The read half of `restore`, exposed on its own so a review surface can ask "what has
+   * changed since the user last approved something" without any intent to restore it.
+   * Gitlinks are left out for the same reason `restore` skips them: a nested repository is
+   * not this one's to report on, let alone rewind.
+   */
+  async changedSince(checkpointId: string): Promise<CheckpointChange[]> {
+    if (!(await gitAvailable())) return [];
+    return this.serialize(async () => {
+      const changes = await this.rawChangesFrom(checkpointId);
+      const result: CheckpointChange[] = [];
+      for (const change of changes) {
+        if (change.srcMode === "160000" || change.dstMode === "160000") continue;
+        result.push({
+          path: toPosix(change.path),
+          status: change.status === "A" ? "added" : change.status === "D" ? "deleted" : "modified",
+        });
+      }
+      return result.sort((a, b) => a.path.localeCompare(b.path));
+    });
+  }
+
+  /**
+   * A file's bytes as of `checkpointId`, or null when the checkpoint does not have it.
+   *
+   * Bytes rather than a string: the caller decides whether the content is text, and a blob
+   * decoded on the way out cannot be checked afterwards.
+   *
+   * The one method here that does **not** take {@link serialize}'s lock, because it is the
+   * one that never writes: git's object store is append-only, so reading a blob out of a
+   * commit cannot interleave with an `add -A` or a `checkout` the way two index writers
+   * can. That matters because review reads one blob per changed file — behind the lock, a
+   * hundred-file diff would be a hundred strictly sequential process spawns.
+   */
+  async fileAt(checkpointId: string, relativePath: string): Promise<Buffer | null> {
+    if (!(await gitAvailable())) return null;
+    await this.ensureRepo();
+    const blob = await runGitBytes(
+      ["cat-file", "blob", `${checkpointId}:${toPosix(relativePath)}`],
+      this.opts(),
+    );
+    return blob.exitCode === 0 ? blob.stdout : null;
+  }
+
+  /**
+   * Put one path back the way `checkpointId` has it, deleting it if the checkpoint has no
+   * such file.
+   *
+   * `restore` for a single path. Kept separate rather than given a pathspec argument
+   * because it deliberately takes no safety checkpoint: reverting one reviewed file is an
+   * undo of a change the user is looking at, and a snapshot per click would bury the
+   * turn-level checkpoints that are the ones worth finding again.
+   */
+  async restorePath(checkpointId: string, relativePath: string): Promise<void> {
+    if (!(await gitAvailable())) {
+      throw new Error("git is not available, so changes cannot be reverted.");
+    }
+    return this.serialize(async () => {
+      await this.ensureRepo();
+      const posix = toPosix(relativePath);
+      const present = await runGit(["cat-file", "-e", `${checkpointId}:${posix}`], this.opts());
+      if (present.exitCode === 0) {
+        await git(["checkout", checkpointId, "--", posix], this.opts());
+      } else {
+        await rm(path.resolve(this.workspace.root, relativePath), { force: true });
+      }
+      await runGit(["add", "-A"], this.opts());
+    });
+  }
+
   // -----------------------------------------------------------------------
   // Internals
   // -----------------------------------------------------------------------
@@ -249,8 +322,44 @@ export class CheckpointManager {
     };
   }
 
-  private async ensureRepo(): Promise<void> {
-    if (this.initialized) return;
+  /**
+   * The raw diff between a checkpoint and the work tree, index synced.
+   *
+   * Only safe from inside `serialize` — it writes the shadow index. Shared by `restore` and
+   * `changedSince` so the two can never disagree about what changed, which would show up as
+   * a review list offering to revert a file that restore then leaves alone.
+   */
+  private async rawChangesFrom(checkpointId: string): Promise<RawChange[]> {
+    await this.ensureRepo();
+    // Verify before doing anything destructive: a sha from a stale UI would otherwise
+    // fail halfway through, having already deleted files.
+    const kind = await runGit(["cat-file", "-t", checkpointId], this.opts());
+    if (kind.exitCode !== 0 || kind.stdout.trim() !== "commit") {
+      throw new Error(`No such checkpoint: ${checkpointId}`);
+    }
+
+    // Sync the index to the work tree so the diff below compares the checkpoint against
+    // what is on disk right now, not against whatever the last checkpoint captured. It is
+    // also what makes an untracked file visible: `diff` alone would not see the one thing
+    // most likely to be the agent's work.
+    await git(["add", "-A"], this.opts());
+
+    return parseRawDiff(
+      await git(["diff", "--cached", "--raw", "-z", "--no-renames", checkpointId], this.opts()),
+    );
+  }
+
+  private ensureRepo(): Promise<void> {
+    // Cleared on failure so a transient error — an antivirus scanner holding the directory
+    // for the length of one `mkdir` — does not disable checkpoints for the whole session.
+    this.ready ??= this.initRepo().catch((cause: unknown) => {
+      this.ready = null;
+      throw cause;
+    });
+    return this.ready;
+  }
+
+  private async initRepo(): Promise<void> {
     await mkdir(this.gitDir, { recursive: true });
 
     const head = await runGit(["rev-parse", "--git-dir"], {
@@ -267,7 +376,6 @@ export class CheckpointManager {
     }
 
     await this.writeExcludes();
-    this.initialized = true;
   }
 
   /**

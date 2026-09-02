@@ -6,8 +6,9 @@
  *   meta.json         SessionSummary, rewritten atomically when it changes
  *   transcript.jsonl  settled TranscriptEntry per line, append-only
  *   history.json      the model's own view of the conversation
+ *   review.json       per-path review baselines, rewritten atomically
  *
- * A directory rather than three parallel trees so deleting a session is one `rm -r`
+ * A directory rather than four parallel trees so deleting a session is one `rm -r`
  * and can't half-succeed into a session that lists but won't open.
  *
  * **Why two records of the same conversation.** `transcript.jsonl` is what a human
@@ -69,6 +70,21 @@ export interface LoadedSession {
   meta: SessionSummary;
   transcript: TranscriptEntry[];
   history: MessageParam[];
+  /** `path` → the shadow commit the user last accepted it at. See `git/review.ts`. */
+  reviewBaselines: Record<string, string>;
+}
+
+/**
+ * On-disk review baselines.
+ *
+ * Persisted for a sharper reason than restart convenience. Forget the map and a reopened
+ * session shows already-approved files in the review drawer, where one "Undo" click reverts
+ * work the user deliberately kept. That is data loss, not annoyance — so the map is durable
+ * even though nothing else about review is.
+ */
+interface StoredReview {
+  version: 1;
+  baselines: Record<string, string>;
 }
 
 export class SessionStore {
@@ -124,6 +140,20 @@ export class SessionStore {
     this.enqueue(meta.id, () => this.writeMeta(meta));
   }
 
+  /**
+   * Snapshot the session's review baselines.
+   *
+   * Whole-map, same as history: the map is a handful of paths and this runs when the user
+   * clicks Keep, so there is nothing to gain from an incremental write and a partially
+   * applied one would point a path at a commit that was never made.
+   */
+  saveReviewBaselines(sessionId: string, baselines: Readonly<Record<string, string>>): void {
+    const payload: StoredReview = { version: 1, baselines: { ...baselines } };
+    this.enqueue(sessionId, async () => {
+      await this.writeAtomic(this.file(sessionId, "review.json"), JSON.stringify(payload));
+    });
+  }
+
   /** Wait for every queued write on a session to land. Called before shutdown. */
   async drain(sessionId?: string): Promise<void> {
     const chains =
@@ -165,11 +195,12 @@ export class SessionStore {
   async load(sessionId: string): Promise<LoadedSession | null> {
     const meta = await this.readMeta(sessionId);
     if (!meta) return null;
-    const [transcript, history] = await Promise.all([
+    const [transcript, history, reviewBaselines] = await Promise.all([
       this.readTranscript(sessionId),
       this.readHistory(sessionId),
+      this.readReviewBaselines(sessionId),
     ]);
-    return { meta, transcript, history };
+    return { meta, transcript, history, reviewBaselines };
   }
 
   async readTranscript(sessionId: string): Promise<TranscriptEntry[]> {
@@ -207,6 +238,28 @@ export class SessionStore {
       // No history yet, or unreadable. An empty conversation is recoverable; refusing
       // to open the session is not.
       return [];
+    }
+  }
+
+  /**
+   * The session's review baselines, empty when there are none or the file is unreadable.
+   *
+   * An unreadable map costs the user a re-review of files they had already kept, which is
+   * annoying; refusing to open the session would be worse.
+   */
+  async readReviewBaselines(sessionId: string): Promise<Record<string, string>> {
+    try {
+      const raw = await readFile(this.file(sessionId, "review.json"), "utf8");
+      const parsed = JSON.parse(raw) as StoredReview;
+      const baselines: Record<string, string> = {};
+      for (const [key, value] of Object.entries(parsed.baselines ?? {})) {
+        // Hand-edited or half-migrated files exist. A non-string here would be handed to
+        // git as a revision and fail somewhere much less obvious.
+        if (typeof value === "string" && value !== "") baselines[key] = value;
+      }
+      return baselines;
+    } catch {
+      return {};
     }
   }
 

@@ -110,42 +110,92 @@ function gitEnv(): NodeJS.ProcessEnv {
  * diff --quiet`, `git status` in a non-repo). Use {@link git} when non-zero is a failure.
  */
 export function runGit(args: readonly string[], options: GitRunOptions): Promise<GitResult> {
+  return new Promise((resolve, reject) => {
+    execFile("git", gitArgv(args, options), execOptions(options), (error, stdout, stderr) => {
+      if (error === null) {
+        resolve({ stdout, stderr, exitCode: 0 });
+        return;
+      }
+      const code = exitCodeOf(error);
+      if (code === null) reject(error);
+      else resolve({ stdout, stderr, exitCode: code });
+    });
+  });
+}
+
+/**
+ * Like {@link runGit}, but the output is bytes.
+ *
+ * For blob contents, which are not text however much a `.ts` file looks like it: a file
+ * that is valid Latin-1 and invalid UTF-8 survives `looksBinary`, and decoding it to a
+ * string would silently replace the bytes it could not read. Anything that then writes
+ * that string back to disk has corrupted the user's file. Callers that need the *text* of
+ * a blob decode here and verify the round trip.
+ *
+ * No `stderr`: the callers are content reads, where a non-zero exit means "no such blob"
+ * and there is nothing useful to report beyond that.
+ */
+export function runGitBytes(
+  args: readonly string[],
+  options: GitRunOptions,
+): Promise<{ stdout: Buffer; exitCode: number }> {
+  return new Promise((resolve, reject) => {
+    execFile(
+      "git",
+      gitArgv(args, options),
+      { ...execOptions(options), encoding: "buffer" },
+      (error, stdout) => {
+        if (error === null) {
+          resolve({ stdout, exitCode: 0 });
+          return;
+        }
+        const code = exitCodeOf(error);
+        if (code === null) reject(error);
+        else resolve({ stdout, exitCode: code });
+      },
+    );
+  });
+}
+
+/** `-c` overrides and repo redirection, ahead of the subcommand. */
+function gitArgv(args: readonly string[], options: GitRunOptions): string[] {
   const prefix: string[] = [];
   if (options.gitDir !== undefined) prefix.push(`--git-dir=${options.gitDir}`);
   if (options.workTree !== undefined) prefix.push(`--work-tree=${options.workTree}`);
   for (const [key, value] of Object.entries({ ...PINNED_CONFIG, ...options.config })) {
     prefix.push("-c", `${key}=${value}`);
   }
-  const argv = [...prefix, ...args];
+  return [...prefix, ...args];
+}
 
-  return new Promise((resolve, reject) => {
-    execFile(
-      "git",
-      argv,
-      {
-        cwd: options.cwd,
-        env: gitEnv(),
-        ...(options.signal ? { signal: options.signal } : {}),
-        timeout: GIT_TIMEOUT_MS,
-        maxBuffer: MAX_GIT_OUTPUT,
-        windowsHide: true,
-      },
-      (error, stdout, stderr) => {
-        if (error === null) {
-          resolve({ stdout, stderr, exitCode: 0 });
-          return;
-        }
-        const failure = error as Error & { code?: number | string; killed?: boolean };
-        // A numeric `code` is git's exit status — an answer, even when non-zero.
-        // A string code (ENOENT, ETIMEDOUT) or a kill means git never really ran.
-        if (typeof failure.code === "number" && failure.killed !== true) {
-          resolve({ stdout, stderr, exitCode: failure.code });
-          return;
-        }
-        reject(failure);
-      },
-    );
-  });
+function execOptions(options: GitRunOptions): {
+  cwd: string;
+  env: NodeJS.ProcessEnv;
+  signal?: AbortSignal;
+  timeout: number;
+  maxBuffer: number;
+  windowsHide: boolean;
+} {
+  return {
+    cwd: options.cwd,
+    env: gitEnv(),
+    ...(options.signal ? { signal: options.signal } : {}),
+    timeout: GIT_TIMEOUT_MS,
+    maxBuffer: MAX_GIT_OUTPUT,
+    windowsHide: true,
+  };
+}
+
+/**
+ * Git's exit status, or null when git never really ran.
+ *
+ * A numeric `code` is an answer, even when non-zero. A string code (ENOENT, ETIMEDOUT) or
+ * a kill means the command did not complete, which is a different kind of failure and has
+ * to reach the caller as a rejection rather than as an exit code it might branch on.
+ */
+function exitCodeOf(error: Error): number | null {
+  const failure = error as Error & { code?: number | string; killed?: boolean };
+  return typeof failure.code === "number" && failure.killed !== true ? failure.code : null;
 }
 
 /** Run git, or throw {@link GitError} carrying stderr. */

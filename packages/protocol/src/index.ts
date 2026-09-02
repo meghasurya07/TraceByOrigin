@@ -104,6 +104,8 @@ export type {
   RuleSummary,
   GitFileStatus,
   GitStatusResult,
+  ReviewFile,
+  ReviewHunk,
   EngineSettings,
   SetProviderKeyParams,
   ProviderKeyStatus,

@@ -29,10 +29,11 @@ import {
   PROTOCOL_VERSION,
   RpcPeer,
 } from "../../protocol/dist/index.js";
-import { countLines } from "../dist/diff.js";
+import { countLines, diffHunks, revertHunk } from "../dist/diff.js";
 import { Engine } from "../dist/engine.js";
 import { FileStateTracker } from "../dist/file-state.js";
 import { CheckpointManager, batchPathspecs, parseRawDiff } from "../dist/git/checkpoint.js";
+import { acceptBaseline, listReview, revertInReview } from "../dist/git/review.js";
 import { gitAvailable } from "../dist/git/run.js";
 import { gitDiff, gitStatus, parseStatus } from "../dist/git/status.js";
 import { Logger } from "../dist/logger.js";
@@ -874,6 +875,7 @@ async function main() {
   await turnSection({ workspaces, scratch, scratchDir });
   await rulesSection();
   await gitSection();
+  await reviewSection();
   await engineSection();
   await processSection();
 
@@ -1907,6 +1909,274 @@ async function gitSection() {
   check("batches nothing into nothing", batchPathspecs([]).length === 0);
   check("keeps a small pathspec list in one batch", batchPathspecs(["a", "b", "c"]).length === 1);
   check("splits a long pathspec list", batchPathspecs(Array(4000).fill("x".repeat(10))).length > 1);
+
+  await rm(root, { recursive: true, force: true });
+}
+
+// ---------------------------------------------------------------------------
+// review
+// ---------------------------------------------------------------------------
+
+/** 16 numbered lines, far enough apart that two edits make two hunks at context 3. */
+const MULTI = Array.from({ length: 16 }, (_, i) => `l${String(i + 1).padStart(2, "0")}`).join("\n");
+
+async function reviewSection() {
+  console.log("\nreview");
+  if (!(await gitAvailable())) {
+    check("git is available", false, "install git to run this section");
+    return;
+  }
+
+  // -- pure hunk machinery -------------------------------------------------
+  // Ahead of the git setup because these are the invariants everything below relies on,
+  // and a failure here explains a failure there.
+  const twoHunks = diffHunks(
+    `${MULTI}\n`,
+    `${MULTI}\n`.replace("l02", "L02").replace("l14", "L14"),
+  );
+  check("splits distant edits into two hunks", twoHunks.length === 2, JSON.stringify(twoHunks));
+  check(
+    "numbers hunks from zero",
+    twoHunks[0]?.index === 0 && twoHunks[1]?.index === 1,
+    JSON.stringify(twoHunks.map((h) => h.index)),
+  );
+  check(
+    "counts one line each way per hunk",
+    twoHunks.every((h) => h.added === 1 && h.removed === 1),
+    JSON.stringify(twoHunks.map((h) => [h.added, h.removed])),
+  );
+
+  const merged = diffHunks("a\nb\nc\n", "A\nb\nC\n");
+  check("merges nearby edits into one hunk", merged.length === 1, JSON.stringify(merged));
+  check("no hunks for identical text", diffHunks("same\n", "same\n").length === 0);
+
+  const onlyFirst = revertHunk(
+    `${MULTI}\n`,
+    `${MULTI}\n`.replace("l02", "L02").replace("l14", "L14"),
+    0,
+    {
+      expectHeader: twoHunks[0].header,
+    },
+  );
+  check(
+    "reverts one hunk and leaves the other",
+    onlyFirst === `${MULTI}\n`.replace("l14", "L14"),
+    JSON.stringify(onlyFirst?.slice(0, 24)),
+  );
+  check(
+    "refuses a hunk whose header has moved",
+    revertHunk("a\nb\n", "A\nb\n", 0, { expectHeader: "@@ -9,9 +9,9 @@" }) === null,
+  );
+  check("refuses an out-of-range hunk", revertHunk("a\n", "A\n", 7) === null);
+  check(
+    "keeps the trailing newline when reverting a whole-file deletion",
+    revertHunk("a\nb\n", "", 0) === "a\nb\n",
+    JSON.stringify(revertHunk("a\nb\n", "", 0)),
+  );
+  check("reverts a whole-file creation to nothing", revertHunk("", "a\nb\n", 0) === "");
+
+  // -- a repo with a baseline ----------------------------------------------
+  const root = await mkdtemp(path.join(os.tmpdir(), "trace-review-"));
+  const repo = path.join(root, "repo");
+  const home = path.join(root, "home");
+  await mkdir(repo, { recursive: true });
+  await mkdir(home, { recursive: true });
+
+  const run = (...args) =>
+    execFileSync("git", args, { cwd: repo, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+  run("init", "-q", ".");
+  run("config", "user.email", "smoke@trace.local");
+  run("config", "user.name", "Smoke");
+  await writeFile(path.join(repo, "multi.txt"), `${MULTI}\n`);
+  await writeFile(path.join(repo, "doomed.txt"), "delete me\n");
+  run("add", ".");
+  run("commit", "-qm", "init");
+
+  const workspaces = new WorkspaceRegistry();
+  const workspace = await workspaces.open(repo);
+  const manager = new CheckpointManager(workspace, home);
+  const baseline = await manager.create({ sessionId: "rev", turnId: "t1", label: "Baseline" });
+  const context = { manager, workspace, defaultBaseline: baseline.id, baselines: {} };
+
+  check(
+    "nothing to review before anything changes",
+    (await listReview(context)).files.length === 0,
+  );
+
+  // -- what the agent did --------------------------------------------------
+  await writeFile(
+    path.join(repo, "multi.txt"),
+    `${MULTI}\n`.replace("l02", "L02").replace("l14", "L14"),
+  );
+  await writeFile(path.join(repo, "added.txt"), "brand new\n");
+  await rm(path.join(repo, "doomed.txt"));
+  await writeFile(path.join(repo, "blob.bin"), Buffer.from([0x00, 0x01, 0x02, 0x03]));
+  // No NUL, so `looksBinary` says text; invalid UTF-8, so the round-trip check says
+  // otherwise. This is the file a naive implementation corrupts.
+  await writeFile(path.join(repo, "latin1.txt"), Buffer.from([0x68, 0x69, 0xe9, 0x0a]));
+  await writeFile(path.join(repo, "huge.txt"), "a\n".repeat(1_100_000));
+
+  const listed = await listReview(context);
+  const file = (p) => listed.files.find((f) => f.path === p);
+  check(
+    "lists every changed path",
+    listed.files.length === 6,
+    JSON.stringify(listed.files.map((f) => f.path)),
+  );
+  check(
+    "sorts by path",
+    listed.files[0]?.path === "added.txt",
+    JSON.stringify(listed.files[0]?.path),
+  );
+  check("does not claim to be truncated", listed.truncated === false);
+  check("calls a new file added", file("added.txt")?.status === "added");
+  check("calls a removed file deleted", file("doomed.txt")?.status === "deleted");
+  check("calls an edited file modified", file("multi.txt")?.status === "modified");
+
+  check(
+    "counts lines the same way the transcript does",
+    file("multi.txt")?.added === 2 && file("multi.txt")?.removed === 2,
+    JSON.stringify([file("multi.txt")?.added, file("multi.txt")?.removed]),
+  );
+  check("offers both hunks of the edited file", file("multi.txt")?.hunks.length === 2);
+  check(
+    "does not invent a blank line at the end of a new file",
+    file("added.txt")?.added === 1 && file("added.txt")?.removed === 0,
+    JSON.stringify([file("added.txt")?.added, file("added.txt")?.removed]),
+  );
+  check(
+    "counts a deleted file's lines as removed",
+    file("doomed.txt")?.added === 0 && file("doomed.txt")?.removed === 1,
+    JSON.stringify([file("doomed.txt")?.added, file("doomed.txt")?.removed]),
+  );
+
+  check("marks a NUL-bearing file binary", file("blob.bin")?.unreviewable === "binary");
+  check(
+    "marks a non-UTF-8 text file binary rather than corrupting it",
+    file("latin1.txt")?.unreviewable === "binary",
+    JSON.stringify(file("latin1.txt")),
+  );
+  check("marks an oversized file too_large", file("huge.txt")?.unreviewable === "too_large");
+  check(
+    "reports no hunks or counts for an unreviewable file",
+    ["blob.bin", "latin1.txt", "huge.txt"].every((p) => {
+      const entry = file(p);
+      return entry?.hunks.length === 0 && entry.added === 0 && entry.removed === 0;
+    }),
+  );
+  check("leaves reviewable files unflagged", file("multi.txt")?.unreviewable === null);
+
+  // -- reverting one hunk --------------------------------------------------
+  const hunks = file("multi.txt").hunks;
+  const afterHunk = await revertInReview(context, "multi.txt", {
+    index: 0,
+    header: hunks[0].header,
+  });
+  check(
+    "puts only the reverted hunk back",
+    (await readFile(path.join(repo, "multi.txt"), "utf8")) === `${MULTI}\n`.replace("l14", "L14"),
+  );
+  check(
+    "returns the file's remaining state",
+    afterHunk?.hunks.length === 1 && afterHunk.added === 1 && afterHunk.removed === 1,
+    JSON.stringify(afterHunk),
+  );
+  check("renumbers the remaining hunk", afterHunk?.hunks[0]?.index === 0);
+
+  const stale = await revertInReview(context, "multi.txt", {
+    index: 0,
+    header: "@@ -99,3 +99,3 @@",
+  }).then(
+    () => null,
+    (cause) => cause,
+  );
+  check(
+    "refuses a hunk from a stale listing",
+    stale !== null && /changed since it was listed/.test(stale.message),
+    stale?.message,
+  );
+  check(
+    "changes nothing when it refuses",
+    (await readFile(path.join(repo, "multi.txt"), "utf8")) === `${MULTI}\n`.replace("l14", "L14"),
+  );
+
+  const binaryHunk = await revertInReview(context, "blob.bin", { index: 0, header: "@@ @@" }).then(
+    () => null,
+    (cause) => cause,
+  );
+  check(
+    "refuses to revert a binary file hunk by hunk",
+    binaryHunk !== null && /hunk by hunk/.test(binaryHunk.message),
+    binaryHunk?.message,
+  );
+
+  // -- reverting whole files -----------------------------------------------
+  check(
+    "deletes a file the baseline never had",
+    (await revertInReview(context, "added.txt")) === null,
+  );
+  check("and it is gone from disk", !(await exists(path.join(repo, "added.txt"))));
+
+  check("restores a deleted file", (await revertInReview(context, "doomed.txt")) === null);
+  check(
+    "with its original contents",
+    (await readFile(path.join(repo, "doomed.txt"), "utf8")) === "delete me\n",
+  );
+
+  check(
+    "reverts a binary file wholesale",
+    (await revertInReview(context, "blob.bin")) === null &&
+      !(await exists(path.join(repo, "blob.bin"))),
+  );
+
+  // -- accepting advances the baseline -------------------------------------
+  const accepted = await acceptBaseline(manager);
+  check("records an accept baseline", typeof accepted === "string" && accepted.length === 40);
+  check(
+    "keeps the accept commit out of the session's checkpoint list",
+    (await manager.list("rev")).length === 1,
+    JSON.stringify((await manager.list("rev")).map((c) => c.label)),
+  );
+  context.baselines = { "multi.txt": accepted };
+
+  check(
+    "an accepted file drops out of review",
+    (await listReview(context)).files.every((f) => f.path !== "multi.txt"),
+    JSON.stringify((await listReview(context)).files.map((f) => f.path)),
+  );
+
+  // The whole point of a pointer rather than a flag: this second edit is one line, and it
+  // must be reported as one line against what was approved — not as three against the
+  // start of the session.
+  await writeFile(
+    path.join(repo, "multi.txt"),
+    `${MULTI}\n`.replace("l14", "L14").replace("l06", "L06"),
+  );
+  const second = (await listReview(context)).files.find((f) => f.path === "multi.txt");
+  check(
+    "a later edit diffs against what was accepted",
+    second?.added === 1 && second.removed === 1 && second.hunks.length === 1,
+    JSON.stringify([second?.added, second?.removed, second?.hunks.length]),
+  );
+  check(
+    "and reverts to the accepted contents, not the session's start",
+    (await revertInReview(context, "multi.txt")) === null &&
+      (await readFile(path.join(repo, "multi.txt"), "utf8")) === `${MULTI}\n`.replace("l14", "L14"),
+  );
+
+  // An accepted path that has since been put back exactly as the session found it differs
+  // from its own baseline while matching the session's, so the diff alone cannot see it.
+  await writeFile(path.join(repo, "multi.txt"), `${MULTI}\n`);
+  check(
+    "still reviews an accepted file returned to its original contents",
+    (await listReview(context)).files.some((f) => f.path === "multi.txt"),
+    JSON.stringify((await listReview(context)).files.map((f) => f.path)),
+  );
+
+  // -- the user's own git, again untouched ---------------------------------
+  check("does not move HEAD", run("log", "--format=%s", "-1").trim() === "init");
+  check("does not stage anything", run("diff", "--cached", "--name-only").trim() === "");
+  check("does not stash anything", run("stash", "list").trim() === "");
 
   await rm(root, { recursive: true, force: true });
 }

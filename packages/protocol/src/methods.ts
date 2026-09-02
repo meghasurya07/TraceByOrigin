@@ -335,6 +335,47 @@ export interface RuleSummary {
   body: string;
 }
 
+/**
+ * One hunk of a file awaiting review.
+ *
+ * `index` is a position in this file's hunk list, which is only meaningful for as long as
+ * the file and its baseline are both unchanged — accept one hunk and every later index
+ * shifts. That is why `review/revert` takes the `header` back as well: it is recomputed
+ * server-side and compared, so a click on a stale list is refused instead of reverting
+ * whichever lines have since moved into position two.
+ */
+export interface ReviewHunk {
+  index: number;
+  /** `@@ -a,b +c,d @@`, exactly as `unifiedDiff` would emit it. */
+  header: string;
+  /** Body lines, each already prefixed with a space, `-`, or `+`. */
+  lines: string[];
+  added: number;
+  removed: number;
+}
+
+/**
+ * A file that differs from what the user last signed off on.
+ *
+ * `status` is relative to the baseline, not to the user's git: a file the agent created
+ * is `added` here even if it was already committed and tracked before the session began.
+ *
+ * `hunks` is empty when `unreviewable` says why — a binary file or one too large to align
+ * line-by-line can still be reverted wholesale, which is the operation that matters, but
+ * there is nothing useful to render for it. `added` and `removed` are zero in that case
+ * too: they count lines, and neither kind of file has a line delta worth reporting, so a
+ * client shows the reason where it would otherwise show `+N/-M`.
+ */
+export interface ReviewFile {
+  /** Workspace-relative, forward slashes. */
+  path: string;
+  status: "added" | "modified" | "deleted";
+  added: number;
+  removed: number;
+  hunks: ReviewHunk[];
+  unreviewable: "binary" | "too_large" | null;
+}
+
 // ---------------------------------------------------------------------------
 // The maps
 // ---------------------------------------------------------------------------
@@ -380,6 +421,55 @@ export interface RequestMap {
   "checkpoint/restore": {
     params: { sessionId: string; checkpointId: string };
     result: { restoredFiles: string[] };
+  };
+
+  /**
+   * What the agent changed and the user has not yet signed off on.
+   *
+   * Built on the same shadow-git checkpoints as `checkpoint/restore`, one level finer: a
+   * checkpoint restores a whole turn, review keeps or discards a single file or a single
+   * hunk. The baseline is the session's oldest checkpoint, advanced per path by
+   * `review/accept`.
+   *
+   * Deliberately *not* filtered to files the agent's edit tools touched. An agent that
+   * runs `npm run format` or `sed -i` changes files through the terminal, where no such
+   * record exists, and those are the changes a user most wants to see. So this answers
+   * "what is different from the last thing you approved", which cannot under-report.
+   *
+   * `truncated` means the change is larger than this method will enumerate; the files it
+   * did return are still accurate.
+   */
+  "review/list": {
+    params: { sessionId: string };
+    result: { files: ReviewFile[]; baselineId: string | null; truncated: boolean };
+  };
+  /**
+   * Sign off on paths: their current contents become the baseline they are next compared
+   * against.
+   *
+   * Advancing the baseline rather than setting a "reviewed" flag is what makes a second
+   * edit to an accepted file behave: it comes back as a diff against what was approved,
+   * not against the start of the session. Omit `paths` to accept everything listed.
+   */
+  "review/accept": {
+    params: { sessionId: string; paths?: string[] };
+    result: { accepted: string[] };
+  };
+  /**
+   * Put one path — or one hunk of it — back the way the baseline has it.
+   *
+   * Returns the path's remaining state so a client never has to guess: `file` is null once
+   * the path matches its baseline again, and otherwise carries a fresh hunk list with
+   * re-numbered indexes.
+   */
+  "review/revert": {
+    params: {
+      sessionId: string;
+      path: string;
+      /** Omit for the whole file. `header` must match what `review/list` returned. */
+      hunk?: { index: number; header: string };
+    };
+    result: { file: ReviewFile | null };
   };
 
   "fs/read": {

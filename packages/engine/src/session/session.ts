@@ -94,6 +94,15 @@ export class Session {
    * task, and re-sending the rule each time pays for the same instruction repeatedly.
    */
   private readonly attachedRules = new Set<string>();
+  /**
+   * `path` → the shadow commit the user last accepted that path at.
+   *
+   * Session state rather than workspace state, because "reviewed" is a fact about this
+   * conversation: two sessions in one folder are answerable for their own edits, and an
+   * accept in one has no business hiding the other's work. Persisted through
+   * `SessionStore` — see `StoredReview` for why forgetting it is data loss.
+   */
+  private reviewBaselines: Record<string, string> = {};
   private todos: TodoItem[] = [];
   private activeTurn: Turn | null = null;
   /** The in-flight turn's promise, so `close` can wait for its last write. */
@@ -127,12 +136,14 @@ export class Session {
     workspace: Workspace | null,
     history: MessageParam[],
     transcript: TranscriptEntry[],
+    reviewBaselines: Record<string, string> = {},
   ): Session {
     const session = new Session(deps, meta, workspace, history, transcript);
     // Recovered from the transcript rather than stored separately. The todo list is
     // derived state — the last `todos` entry *is* the current list — and a second copy
     // on disk is a second thing that can disagree with it.
     session.todos = lastTodos(transcript);
+    session.reviewBaselines = reviewBaselines;
     return session;
   }
 
@@ -180,6 +191,38 @@ export class Session {
    */
   forgetFileState(): void {
     this.files.clear();
+  }
+
+  /** What each path is currently compared against for review. */
+  get reviewed(): Readonly<Record<string, string>> {
+    return this.reviewBaselines;
+  }
+
+  /**
+   * Point `paths` at `commit`: their contents there are what future diffs compare against.
+   *
+   * Advancing a pointer rather than setting a flag is the whole review model — see
+   * `git/review.ts`. Returns the paths recorded, which is every path given: the caller has
+   * already made the commit, so there is nothing here that can partly fail.
+   */
+  acceptReview(paths: readonly string[], commit: string): string[] {
+    for (const relativePath of paths) this.reviewBaselines[relativePath] = commit;
+    this.deps.store.saveReviewBaselines(this.meta.id, this.reviewBaselines);
+    return [...paths];
+  }
+
+  /**
+   * Discard every review baseline.
+   *
+   * Called after a checkpoint restore, for the same reason as {@link forgetFileState} and a
+   * sharper one. A restore rewinds the work tree, so a baseline recorded afterwards can be
+   * *newer* than the file it describes — and a diff computed in that direction reads
+   * backwards, offering to "revert" the agent's work by re-applying it. No baselines means
+   * everything is compared against the session's start, which is always a coherent answer.
+   */
+  forgetReview(): void {
+    this.reviewBaselines = {};
+    this.deps.store.saveReviewBaselines(this.meta.id, this.reviewBaselines);
   }
 
   // -----------------------------------------------------------------------

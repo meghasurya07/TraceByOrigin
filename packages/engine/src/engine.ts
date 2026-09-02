@@ -55,11 +55,12 @@ import { discoverCommands } from "./commands.js";
 import { countLines } from "./diff.js";
 import { FileSearch } from "./file-search.js";
 import { CheckpointManager } from "./git/checkpoint.js";
+import { acceptBaseline, listReview, revertInReview, type ReviewContext } from "./git/review.js";
 import { gitAvailable } from "./git/run.js";
 import { gitDiff, gitStatus } from "./git/status.js";
 import { Logger } from "./logger.js";
 import { MODELS, resolveModel } from "./models.js";
-import { looksBinary, resolveInWorkspace } from "./paths.js";
+import { looksBinary, resolveInWorkspace, toPosix } from "./paths.js";
 import { AnthropicProvider } from "./providers/anthropic.js";
 import { discoverRules } from "./rules.js";
 import { Session } from "./session/session.js";
@@ -362,7 +363,67 @@ export class Engine {
         session.interrupt();
         const result = await manager.restore(params.checkpointId);
         session.forgetFileState();
+        // A rewound work tree can be *older* than a review baseline recorded against it,
+        // and a diff in that direction reads backwards. See `forgetReview`.
+        session.forgetReview();
         return { restoredFiles: result.restoredFiles };
+      },
+
+      // ---- review ----
+
+      "review/list": async (params) => {
+        const session = await this.requireSession(params.sessionId);
+        const context = await this.reviewContext(session);
+        if (!context) return { files: [], baselineId: null, truncated: false };
+        const { files, truncated } = await listReview(context);
+        return { files, baselineId: context.defaultBaseline, truncated };
+      },
+
+      "review/accept": async (params) => {
+        const session = await this.requireSession(params.sessionId);
+        const context = await this.reviewContext(session);
+        if (!context) return { accepted: [] };
+
+        // `paths` omitted means "everything listed", resolved here rather than client-side
+        // so accept-all cannot race a list: a file that changed in between is either in
+        // this listing and accepted at its current contents, or in the next one.
+        const paths =
+          params.paths ?? (await listReview(context)).files.map((file) => toPosix(file.path));
+        if (paths.length === 0) return { accepted: [] };
+
+        // One commit for the whole batch. It is a snapshot of the work tree, so every
+        // accepted path finds its own current contents in it, and the paths *not* accepted
+        // are simply never pointed at it.
+        const commit = await acceptBaseline(context.manager);
+        if (commit === null) {
+          throw new RpcError(
+            ErrorCode.InternalError,
+            "Could not record the review baseline, so nothing was accepted.",
+          );
+        }
+        return { accepted: session.acceptReview(paths.map(toPosix), commit) };
+      },
+
+      "review/revert": async (params) => {
+        const session = await this.requireSession(params.sessionId);
+        const context = await this.reviewContext(session);
+        if (!context) {
+          throw new RpcError(
+            ErrorCode.InvalidParams,
+            "This session has no review baseline, so there is nothing to revert to.",
+          );
+        }
+        // Same ordering argument as `checkpoint/restore`: never write a file underneath a
+        // tool call that may be reading it.
+        session.interrupt();
+        try {
+          return { file: await revertInReview(context, params.path, params.hunk) };
+        } catch (cause) {
+          throw new RpcError(
+            ErrorCode.InvalidParams,
+            cause instanceof Error ? cause.message : String(cause),
+          );
+        }
       },
 
       // ---- filesystem ----
@@ -748,6 +809,7 @@ export class Engine {
       workspace,
       loaded.history,
       loaded.transcript,
+      loaded.reviewBaselines,
     );
     this.live.set(sessionId, session);
     log.debug(`Restored session ${sessionId.slice(0, 8)} from disk`, {
@@ -844,6 +906,32 @@ export class Engine {
     const manager = new CheckpointManager(workspace, this.home);
     this.checkpoints.set(workspace.id, manager);
     return manager;
+  }
+
+  /**
+   * What review compares against, or null when there is nothing to compare.
+   *
+   * The session baseline is its **oldest** checkpoint — `list` returns newest-first, so the
+   * last element — which is the work tree as it stood before the agent's first edit of the
+   * session. Anything newer would already contain some of the agent's work and hide it.
+   *
+   * Null when the session has no checkpoints at all: no workspace, no git, checkpoints
+   * switched off, or simply no mutating turn yet. All four mean the same thing to a caller —
+   * nothing has been changed that this session can account for.
+   */
+  private async reviewContext(session: Session): Promise<ReviewContext | null> {
+    const workspace = session.root;
+    const manager = await this.checkpointManager(workspace);
+    if (!manager || !workspace) return null;
+    const checkpoints = await manager.list(session.id);
+    const oldest = checkpoints[checkpoints.length - 1];
+    if (oldest === undefined) return null;
+    return {
+      manager,
+      workspace,
+      defaultBaseline: oldest.id,
+      baselines: session.reviewed,
+    };
   }
 
   // -----------------------------------------------------------------------
