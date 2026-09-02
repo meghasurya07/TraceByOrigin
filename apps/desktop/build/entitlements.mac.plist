@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Entitlements for the Trace app on macOS.
+
+  The Hardened Runtime is on (`hardenedRuntime: true`), which is mandatory for
+  notarization and which switches off, by default, several things Electron cannot run
+  without. Each key below re-enables exactly one of them.
+
+  There is deliberately no `com.apple.security.app-sandbox`: Trace is a coding tool
+  distributed as a signed DMG, not through the Mac App Store, and it has to read and
+  write whatever project directory the user opens.
+
+  Copyright (c) 2026 Origin AI
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <!-- V8 compiles JavaScript to machine code at runtime. Without this the renderer
+         cannot start at all. -->
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+
+    <!-- V8 also writes to pages it later executes in ways the JIT entitlement alone
+         does not cover. Electron requires both. -->
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+
+    <!-- The engine is launched by setting ELECTRON_RUN_AS_NODE on Electron's own binary,
+         and Electron reads DYLD_* variables of its own during startup. -->
+    <key>com.apple.security.cs.allow-dyld-environment-variables</key>
+    <true/>
+
+    <!-- `node-pty`'s prebuilt `pty.node` and its `spawn-helper` are loaded out of
+         `resources/engine/node_modules`. Library validation would refuse any binary not
+         signed by the same team as the main executable. -->
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+  </dict>
+</plist>

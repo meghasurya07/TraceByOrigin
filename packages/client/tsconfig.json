@@ -1,0 +1,16 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist",
+    "tsBuildInfoFile": "dist/.tsbuildinfo",
+    // Deliberately no "types": this package must compile with neither Node nor DOM
+    // globals in scope. It is imported by an Electron renderer, a Node CLI, and one
+    // day a browser; anything that reaches for `process` or `window` here is a bug
+    // that only shows up on the surface that lacks it.
+    "types": [],
+    "lib": ["ES2023"]
+  },
+  "include": ["src/**/*.ts"],
+  "references": [{ "path": "../protocol" }]
+}

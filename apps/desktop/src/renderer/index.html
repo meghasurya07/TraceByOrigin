@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Trace</title>
+
+    <!--
+      The renderer never talks to the network. Every byte it needs arrives over the
+      preload bridge, so `connect-src 'none'` is not a precaution — it is a statement
+      about the architecture, and any future `fetch` here is meant to fail loudly.
+
+      `wasm-unsafe-eval` is for Shiki's WASM grammar engine, which does the syntax
+      highlighting. `frame-src http: https:` is the browser panel, which previews the
+      dev server of whatever the user is building.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none';
+               script-src 'self' 'wasm-unsafe-eval';
+               style-src 'self' 'unsafe-inline';
+               img-src 'self' data: blob:;
+               font-src 'self' data:;
+               connect-src 'none';
+               frame-src http: https:;
+               base-uri 'none';
+               form-action 'none'"
+    />
+    <meta name="color-scheme" content="dark light" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="./main.tsx"></script>
+  </body>
+</html>

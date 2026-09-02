@@ -1,0 +1,20 @@
+{
+  // The desktop app's typecheck graph.
+  //
+  // Two targets, because main/preload and the renderer disagree about two things that
+  // cannot be reconciled in one config:
+  //
+  //   - Globals. main gets Node and Electron; the renderer gets the DOM. Letting the
+  //     renderer see `process` is how `fs` ends up imported into a browser context.
+  //   - Module resolution. main is real Node ESM and needs `.js` on every relative
+  //     import; the renderer is bundled by Vite and must not have them. One setting
+  //     cannot be both, so they are separate projects.
+  //
+  // Neither emits JavaScript — Vite does that. They emit declarations into `.tsbuild/`
+  // only because `composite` requires an output, and `tsc -b` at the repo root is what
+  // makes a protocol change a compile error here.
+  //
+  // Copyright (c) 2026 Origin AI
+  "files": [],
+  "references": [{ "path": "./tsconfig.node.json" }, { "path": "./tsconfig.web.json" }]
+}

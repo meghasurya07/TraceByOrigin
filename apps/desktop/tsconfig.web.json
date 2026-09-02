@@ -1,0 +1,27 @@
+{
+  // The renderer: a browser, and nothing more.
+  //
+  // `moduleResolution: "bundler"` rather than NodeNext, so relative imports are written
+  // without a file extension the way every React codebase writes them. Vite owns
+  // resolution here; `tsc` is only checking types.
+  //
+  // No "node" in `types`. The renderer reaches the OS exclusively through the preload
+  // bridge, and the fastest way to violate that is to have `process` and `Buffer` in
+  // scope while writing a component.
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": ".tsbuild/web",
+    "tsBuildInfoFile": ".tsbuild/web/.tsbuildinfo",
+    "emitDeclarationOnly": true,
+
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "types": [],
+    "allowImportingTsExtensions": false
+  },
+  "include": ["src/renderer/**/*.ts", "src/renderer/**/*.tsx", "src/shared/**/*.ts"],
+  "references": [{ "path": "../../packages/protocol" }, { "path": "../../packages/client" }]
+}

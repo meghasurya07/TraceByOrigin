@@ -1,0 +1,40 @@
+{
+  "name": "@trace/engine",
+  "version": "0.1.0",
+  "private": true,
+  "description": "The Trace engine — headless core owning fs, git, terminals, indexing, and the agent loop.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "trace-engine": "./dist/main.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "tsc -b --clean",
+    "start": "node dist/main.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.122.0",
+    "@trace/protocol": "workspace:*",
+    "@vscode/ripgrep": "^1.18.0",
+    "ignore": "^7.0.5",
+    "picomatch": "^4.0.7",
+    "zod": "^3.24.1"
+  },
+  "optionalDependencies": {
+    "node-pty": "^1.0.0"
+  },
+  "devDependencies": {
+    "@types/picomatch": "^4.0.3"
+  }
+}

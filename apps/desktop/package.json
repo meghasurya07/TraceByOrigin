@@ -1,0 +1,48 @@
+{
+  "name": "@trace/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "//productName": "What `app.getName()` returns, which is what `app.getPath('userData')` is built from. Without it the scoped package name wins and a Trace install keeps its vault and window state in %APPDATA%/@trace/desktop — a nested folder named after an npm scope, in the one directory a user might actually go looking. electron-builder.yml sets the same value for the installer and the executable; this one is for the running app.",
+  "productName": "Trace",
+  "description": "Trace — the desktop Agents Window. Chat is the frame; the work panel is the viewport.",
+  "author": "Origin AI",
+  "license": "UNLICENSED",
+  "type": "module",
+  "main": "./out/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "preview": "electron-vite preview",
+    "typecheck": "tsc -b --pretty",
+    "clean": "tsc -b --clean",
+    "bundle:engine": "node scripts/bundle-engine.mjs",
+    "package": "pnpm -w run build && electron-vite build && node scripts/bundle-engine.mjs && electron-builder",
+    "package:dir": "pnpm -w run build && electron-vite build && node scripts/bundle-engine.mjs && electron-builder --dir"
+  },
+  "dependencies": {
+    "@trace/client": "workspace:*",
+    "@trace/protocol": "workspace:*"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.3",
+    "@tanstack/react-virtual": "^3.14.10",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.5",
+    "@vitejs/plugin-react": "^6.1.1",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
+    "clsx": "^2.1.1",
+    "electron": "^44.1.0",
+    "electron-builder": "^26.15.3",
+    "electron-vite": "^5.0.0",
+    "lucide-react": "^1.38.0",
+    "radix-ui": "^1.6.7",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "shiki": "^4.4.3",
+    "tailwind-merge": "^3.6.0",
+    "tailwindcss": "^4.3.3",
+    "vite": "^8.2.2",
+    "zustand": "^5.0.15"
+  }
+}

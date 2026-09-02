@@ -1,0 +1,20 @@
+{
+  // main + preload: real Node ESM inside Electron.
+  //
+  // `shared/` is compiled by BOTH this project and tsconfig.web.json. That is
+  // intentional — it holds the IPC contract, and the whole point is that the two sides
+  // of the bridge typecheck against one declaration. It must therefore stay free of
+  // both Node and DOM globals, and relative imports inside it must carry `.js` so this
+  // project can resolve them (Vite tolerates the extension; Node requires it).
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": ".tsbuild/node",
+    "tsBuildInfoFile": ".tsbuild/node/.tsbuildinfo",
+    "emitDeclarationOnly": true,
+    "types": ["node"],
+    "lib": ["ES2023"]
+  },
+  "include": ["src/main/**/*.ts", "src/preload/**/*.ts", "src/shared/**/*.ts"],
+  "references": [{ "path": "../../packages/protocol" }, { "path": "../../packages/client" }]
+}

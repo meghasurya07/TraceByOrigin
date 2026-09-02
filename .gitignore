@@ -1,0 +1,55 @@
+# Trace — an agent-first coding application
+# Copyright (c) 2026 Origin AI
+
+# deps / build output
+node_modules/
+dist/
+out/
+build/
+release/
+*.tsbuildinfo
+
+# Type-only build output. The renderer is transpiled by Vite; `tsc -b` runs over it
+# purely to typecheck, and emits declarations here so `composite` is satisfiable.
+.tsbuild/
+
+# electron-builder
+apps/desktop/release/
+apps/desktop/dist-electron/
+
+# ...but `buildResources` is *input*, not output: icons and the two macOS entitlements
+# plists live in apps/desktop/build/ because that is where electron-builder looks for
+# them, and losing them means an unsignable Mac app. The directory itself has to be
+# re-included before the files inside it can be, since git does not descend into an
+# excluded directory.
+!apps/desktop/build/
+!apps/desktop/build/**
+
+# env & secrets — BYOK keys must never be committed
+.env
+.env.*
+!.env.example
+*.pem
+*.p12
+
+# local engine state
+.trace/
+!.trace/rules/
+
+# logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# editors / OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# research/raw/ used to be excluded here as "scratch". It is not scratch: it is the parity
+# checklist — 1.3 MB of markdown, including the 305 KB Cursor feature/UX inventory that the
+# roadmap is derived from. It is not reproducible (the fetches that produced it hit rate
+# limits and a quota wall), so leaving it out of the only backup defeats the point of having
+# one. Text this size costs git nothing.

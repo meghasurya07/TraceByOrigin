@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Entitlements for Trace's helper processes on macOS.
+
+  An Electron app is not one executable: `Trace Helper.app`, `Trace Helper (GPU).app`,
+  `Trace Helper (Renderer).app` and `Trace Helper (Plugin).app` are each signed
+  separately, and this is the file `entitlementsInherit` applies to them.
+
+  It exists as a second file because the helpers need one key the main app must not
+  have — `com.apple.security.inherit`, which tells the kernel to take the parent's
+  entitlements rather than assert its own. Pointing `entitlementsInherit` at the app's
+  own plist, which is what this config used to do, signs the helpers as independent
+  processes and is the usual reason a notarized Electron app crashes on launch for
+  everyone except the developer who built it.
+
+  Copyright (c) 2026 Origin AI
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <!-- Take the parent's entitlements. -->
+    <key>com.apple.security.inherit</key>
+    <true/>
+
+    <!-- The renderer helper is where V8 actually runs, so the JIT keys have to be
+         asserted here too; inheritance covers sandbox scope, not Hardened Runtime
+         exceptions. -->
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+    <key>com.apple.security.cs.allow-dyld-environment-variables</key>
+    <true/>
+
+    <!-- The engine runs as a child of the app under ELECTRON_RUN_AS_NODE and loads
+         `pty.node` there. -->
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+  </dict>
+</plist>

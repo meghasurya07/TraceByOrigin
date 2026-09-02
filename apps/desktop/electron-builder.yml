@@ -1,0 +1,107 @@
+# Packaging config for Trace.
+#
+# One codebase, three installers. `electron-builder` is invoked by `pnpm package`
+# after `electron-vite build` and `scripts/bundle-engine.mjs`, so `out/` already holds
+# four finished artefacts — main, preload, renderer, and the bundled engine. This file
+# only describes how to wrap them.
+#
+# The engine ships as plain JavaScript beside the app rather than as a separate binary:
+# it is spawned with Electron's own bundled Node (`ELECTRON_RUN_AS_NODE=1`), so there is
+# no second runtime to sign, notarize, or keep in step with the app.
+#
+# Copyright (c) 2026 Origin AI
+
+appId: ai.origin.trace
+productName: Trace
+copyright: Copyright © 2026 Origin AI
+
+directories:
+  output: release
+  # Icons and entitlements — inputs, not output. `.gitignore` carries a matching
+  # negation for this one path, since `build/` is ignored everywhere else.
+  buildResources: build
+
+# `out/engine` is excluded here because it ships through `extraResources` below. Without
+# the negation it would travel twice: once inside the asar, where nothing reads it and
+# native modules cannot be loaded from, and once beside it.
+files:
+  - out/**/*
+  - "!out/engine/**"
+  - package.json
+
+# The engine, bundled and staged by `scripts/bundle-engine.mjs`.
+#
+# The layout inside `out/engine` is already the layout the engine needs: `dist/main.js` is
+# what `engineEntry()` in `src/main/engine-host.ts` looks for under `process.resourcesPath`,
+# `package.json` one level up is what `ENGINE_VERSION` reads for its version string and what
+# marks the bundle as ESM, and `node_modules/` beside them is the first `node_modules` Node
+# checks when resolving `node-pty` and ripgrep's platform binary out of the bundle.
+#
+# It replaces two entries that copied `packages/*/dist` — raw `tsc` output that still
+# imports `@anthropic-ai/sdk`, `zod`, `ignore` and `picomatch` by bare specifier with no
+# `node_modules` beside it. That shipped an app whose engine died on its first import.
+#
+# ## Why `node_modules` needs its own entry
+#
+# It is not a redundant line and it cannot be folded into the entry above, or replaced by a
+# `filter`. `createFilter()` in `app-builder-lib/out/util/filter.js` opens with
+#
+#     if (relative === "node_modules") return false
+#
+# before any pattern is consulted — a deliberate exclusion of the *root* `node_modules` of a
+# copy, applied to every mapping, `extraResources` included. With one entry rooted at
+# `out/engine`, the staged directory sits at exactly that path and is dropped in silence:
+# the build succeeds, `resources/engine` holds only `dist/` and `package.json`, and the
+# installed app opens a Terminal tab that cannot find `node-pty`. Giving the directory its
+# own mapping makes it the root of its own copy, where its children are `node-pty` and
+# `@vscode` and the check never matches.
+extraResources:
+  - from: out/engine
+    to: engine
+  - from: out/engine/node_modules
+    to: engine/node_modules
+
+asar: true
+# No `asarUnpack`: the only native code in a Trace install is the staged `node-pty`
+# prebuild and the ripgrep binary, and `extraResources` land in `resources/` *outside*
+# the archive by definition. Nothing native is inside the asar to unpack.
+
+# Nothing to rebuild. The app's own dependencies are bundled by Vite, and the engine's
+# two native payloads are staged as prebuilt binaries by `bundle-engine.mjs` — letting
+# electron-builder loose on a pnpm workspace to rebuild them would, at best, redo work
+# that is already correct.
+npmRebuild: false
+
+# ## Why no `arch` lists
+#
+# Every target below builds for the host architecture, which is electron-builder's
+# default and here a requirement rather than a convenience. `bundle-engine.mjs` stages
+# `node-pty` and ripgrep for the machine it runs on — it has no choice, since npm only
+# installs the host's optional platform packages — and a native `.node` cannot be loaded
+# by a process of a different architecture. Asking an x64 machine for an arm64 installer
+# would produce an app that launches and then fails to open a terminal or run a search.
+#
+# So each installer is built on a host that matches it: `windows-latest` and
+# `windows-11-arm`, `macos-latest` (arm64) and `macos-13` (x64), `ubuntu-latest` and
+# `ubuntu-24.04-arm`. That is a CI matrix, not a flag.
+
+mac:
+  category: public.app-category.developer-tools
+  target: dmg
+  hardenedRuntime: true
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.inherit.plist
+
+win:
+  target: nsis
+
+linux:
+  category: Development
+  target:
+    - AppImage
+    - deb
+
+# `trace://` deep links — how a browser hands a sign-in callback back to the app.
+protocols:
+  - name: Trace
+    schemes: [trace]

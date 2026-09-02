@@ -1,0 +1,31 @@
+# Line endings are pinned, not negotiated.
+#
+# Without this file git honours each machine's `core.autocrlf`, which on Windows is `true`.
+# Every source file here is authored LF, prettier writes LF, and the engine ships to macOS
+# and Linux as well — so a Windows checkout that silently becomes CRLF turns the first
+# cross-platform commit into a whole-repo diff. `eol=lf` overrides autocrlf on every
+# platform: LF in the repository and LF in the working copy, everywhere.
+* text=auto eol=lf
+
+# Binaries must never be touched. `text=auto` guesses from content and usually guesses
+# right, but an icon that gets newline-translated is a corrupt icon, and the failure shows
+# up as an unsignable app rather than as a diff.
+*.png binary
+*.ico binary
+*.icns binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.node binary
+
+# Generated, and enormous. Marking it means `git diff` stays readable and GitHub does not
+# count 40k lines of resolved dependencies as authored code in the language stats.
+pnpm-lock.yaml -diff linguist-generated=true
+
+# Salvaged research dumps: prose, not source. Excluding them from language detection stops
+# GitHub from reporting this repository as majority Markdown.
+research/raw/** linguist-documentation=true

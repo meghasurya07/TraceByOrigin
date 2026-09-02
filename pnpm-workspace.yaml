@@ -1,0 +1,45 @@
+packages:
+  - "packages/*"
+  - "apps/*"
+  - "services/*"
+
+# ## Install-time build scripts
+#
+# pnpm runs no dependency's `postinstall` unless it is named here. This file is the only
+# place the setting is read from: pnpm 11 ignores a `pnpm` field in `package.json` (it warns
+# and continues, so the mistake looks like a clean install) and no longer reads pnpm settings
+# out of `.npmrc` either. Everything listed `true` runs arbitrary code on every install, so
+# each entry carries its reason.
+allowBuilds:
+  # THE ONE THAT MATTERS. Electron's postinstall is what downloads the 367 MB runtime into
+  # `node_modules/electron/dist`. Without it a fresh `pnpm install` reports success and
+  # `pnpm dev` dies with `Error: Electron uninstall` from `getElectronPath()`, because the
+  # npm package is a stub that reads `dist/path.txt` and there is no `dist/`.
+  electron: true
+
+  # node-pty needs node-gyp + a platform toolchain, and we do not want a missing
+  # MSVC install to be the thing that stops `pnpm install` on a fresh machine.
+  #
+  # Safe to leave off, and verified so: node-pty is N-API, so its shipped
+  # `prebuilds/<platform>-<arch>/pty.node` loads unchanged under Electron 44 (ABI 149)
+  # despite having been built for another ABI. `scripts/bundle-engine.mjs` stages that
+  # prebuild directly and fails loudly if the host has none — which is the Linux case,
+  # where a build machine does need the toolchain.
+  node-pty: false
+
+  # 1.18 moved to esbuild-style platform packages (@vscode/ripgrep-win32-x64 et al),
+  # so the binary arrives as a normal dependency and the legacy download script is
+  # dead weight. Verified: `rgPath` resolves and `rg --version` runs with this off.
+  "@vscode/ripgrep": false
+  # Vite's bundler. The postinstall links the platform binary that
+  # @esbuild/<platform> already delivered; without it `electron-vite build`
+  # cannot start. Ubiquitous and trusted — allow.
+  esbuild: true
+
+  # Arrives as a transitive dep of electron-builder and is only used for the
+  # Squirrel.Windows target. We ship NSIS (see electron-builder.yml), so its
+  # postinstall is pure download for a target we never build.
+  electron-winstaller: false
+
+minimumReleaseAgeExclude:
+  - electron@44.1.0
