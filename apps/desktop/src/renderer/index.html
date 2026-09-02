@@ -9,6 +9,11 @@
       preload bridge, so `connect-src 'none'` is not a precaution — it is a statement
       about the architecture, and any future `fetch` here is meant to fail loudly.
 
+      Under `electron-vite dev` the `trace:allow-dev-hmr` plugin rewrites that one
+      directive to admit the dev server's websocket, since HMR is a websocket and this
+      would otherwise silently block it. The plugin is `apply: "serve"`, so what ships is
+      what is written here.
+
       `wasm-unsafe-eval` is for Shiki's WASM grammar engine, which does the syntax
       highlighting. `frame-src http: https:` is the browser panel, which previews the
       dev server of whatever the user is building.

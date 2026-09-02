@@ -38,6 +38,7 @@ import { resolve } from "node:path";
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "electron-vite";
+import type { Plugin } from "vite";
 
 /**
  * Left to the runtime, never bundled.
@@ -51,6 +52,39 @@ const RUNTIME_ONLY = [
   /^electron\/.+/,
   ...builtinModules.flatMap((name) => [name, `node:${name}`]),
 ];
+
+/**
+ * Lets HMR connect in dev, and only in dev.
+ *
+ * `index.html` sets `connect-src 'none'`, which is a true statement about the shipped app —
+ * the renderer reaches the outside world only through the preload bridge. It also blocks
+ * Vite's HMR websocket, so every renderer edit under `electron-vite dev` needed a manual
+ * reload, and the only evidence was a CSP violation in a DevTools console nobody had open.
+ *
+ * Rewriting the served HTML rather than loosening the file keeps the production CSP exactly
+ * as written: `apply: "serve"` means this never runs during a build, so there is no way for
+ * the dev allowance to reach a release. The origin is spelled out rather than widened to
+ * `ws:` so a stray websocket to anywhere else still fails.
+ *
+ * The trailing semicolon in the search string is load-bearing. The comment above the meta
+ * tag quotes the directive too, and a string `replace` takes the first match — without the
+ * semicolon this rewrote the prose and left the policy alone, which looks identical in the
+ * diff and fails identically at runtime.
+ */
+function allowDevHmr(): Plugin {
+  return {
+    name: "trace:allow-dev-hmr",
+    apply: "serve",
+    transformIndexHtml: {
+      order: "pre",
+      handler(html, context) {
+        const port = context.server?.config.server.port ?? 5173;
+        const origin = `localhost:${String(port)}`;
+        return html.replace("connect-src 'none';", `connect-src ws://${origin} http://${origin};`);
+      },
+    },
+  };
+}
 
 export default defineConfig({
   main: {
@@ -81,7 +115,7 @@ export default defineConfig({
   },
   renderer: {
     root: resolve(__dirname, "src/renderer"),
-    plugins: [react(), tailwindcss()],
+    plugins: [react(), tailwindcss(), allowDevHmr()],
     resolve: {
       alias: {
         "@": resolve(__dirname, "src/renderer"),

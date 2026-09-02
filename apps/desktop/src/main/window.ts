@@ -76,6 +76,7 @@ export function createWindow(options: WindowHostOptions): BrowserWindow {
   attachStatePersistence(window, options.state);
   attachStatePush(window);
   attachNavigationGuards(window, options.onLog);
+  attachFaultLogging(window, options.onLog);
 
   window.once("ready-to-show", () => {
     window.show();
@@ -175,5 +176,44 @@ function attachNavigationGuards(window: BrowserWindow, onLog?: (line: string) =>
 
   window.webContents.on("will-attach-webview", (event) => {
     event.preventDefault();
+  });
+}
+
+/**
+ * Renderer faults, surfaced where someone will see them.
+ *
+ * The renderer's console lives in DevTools, which nobody has open when the interesting
+ * failure happens — and in a packaged build there is no terminal to leave open either. A
+ * React component that throws while rendering therefore fails silently from the outside:
+ * the window is blank or a panel is missing and the only record of why is behind a
+ * keystroke the user does not know about. Forwarding warnings and errors to the same log
+ * every other subsystem writes to means a bug report can be a log file.
+ *
+ * Only `warning` and `error` — `info` and `debug` would carry every HMR notice and every
+ * `console.log` left in a component, and a log that noisy is one nobody reads.
+ *
+ * The two process-level faults are here for the same reason. A crashed renderer takes its
+ * console with it, so the exit reason is the only evidence left; a `preload-error` means
+ * `window.trace` never existed, which the renderer can only report as every request
+ * failing at once.
+ */
+function attachFaultLogging(window: BrowserWindow, onLog?: (line: string) => void): void {
+  if (onLog === undefined) return;
+
+  window.webContents.on("console-message", (details) => {
+    if (details.level !== "warning" && details.level !== "error") return;
+    // `sourceId` is a full `http://localhost:5173/src/...` or `file:///...` URL. The tail
+    // is the part that identifies the file, and the whole thing crowds out the message.
+    const source = details.sourceId.split("/").pop() ?? details.sourceId;
+    const at = source === "" ? "" : ` (${source}:${String(details.lineNumber)})`;
+    onLog(`[renderer] ${details.level}: ${details.message}${at}`);
+  });
+
+  window.webContents.on("render-process-gone", (_event, details) => {
+    onLog(`[renderer] gone: ${details.reason} (exit ${String(details.exitCode)})`);
+  });
+
+  window.webContents.on("preload-error", (_event, preloadPath, error) => {
+    onLog(`[renderer] preload failed: ${preloadPath}: ${error.message}`);
   });
 }
