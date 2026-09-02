@@ -42,7 +42,7 @@
  */
 
 import type { AccountInfo, AuthState, EngineNotification, EngineStatus } from "@trace/client";
-import type { ParamsOf, RequestMethod, ResultOf } from "@trace/protocol";
+import type { ParamsOf, RequestMethod, ResultOf, WorkPanelTarget } from "@trace/protocol";
 
 // ---------------------------------------------------------------------------
 // Channels
@@ -181,7 +181,13 @@ export type UiCommand =
   | { kind: "focus_prompt" }
   | { kind: "toggle_sidebar" }
   | { kind: "toggle_work_panel" }
-  | { kind: "open_work_panel"; target: "files" | "diff" | "canvas" | "pr" | "browser" | "terminal" }
+  /**
+   * `WorkPanelTarget` itself, not a copy of its members.
+   *
+   * For the reason spelled out above `SettingsSection`: a hand-copied union means adding a
+   * panel compiles cleanly and silently leaves one menu item pointing at nothing.
+   */
+  | { kind: "open_work_panel"; target: WorkPanelTarget }
   | { kind: "open_settings"; section?: SettingsSection }
   | { kind: "open_session_search" }
   | { kind: "interrupt_turn" }

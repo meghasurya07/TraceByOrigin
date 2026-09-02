@@ -7,11 +7,12 @@
  * sidebar: here the conversation owns the window and the tools appear when the
  * conversation needs them, so the default state of the app is one column of text.
  *
- * Six targets, one at a time. Tabs rather than a split, because the panel is 30–40% of a
- * laptop screen and two things sharing that space are both unusable. `⌘1…⌘6` jump
+ * Seven targets, one at a time. Tabs rather than a split, because the panel is 30–40% of a
+ * laptop screen and two things sharing that space are both unusable. `⌘1…⌘7` jump
  * straight to a target and `⌘⇧M` toggles the panel, all handled in the store — pressing
  * the target that is already showing closes the panel, which is what makes those keys
- * toggles instead of no-ops.
+ * toggles instead of no-ops. `TABS` below is in the same order as `menu.ts`'s
+ * `WORK_PANELS`, which is what makes the number a user presses match what they see.
  *
  * The splitter is a real drag, clamped so neither side can be squeezed out of existence.
  * The width is remembered in a module-level variable rather than in the store: it is not
@@ -27,6 +28,7 @@ import {
   GitCompare,
   GitPullRequest,
   Globe,
+  ListChecks,
   PanelRightClose,
   PenTool,
   SquareTerminal,
@@ -41,10 +43,12 @@ import { CanvasPanel } from "./panels/CanvasPanel";
 import { DiffPanel } from "./panels/DiffPanel";
 import { FilesPanel } from "./panels/FilesPanel";
 import { PrPanel } from "./panels/PrPanel";
+import { ReviewPanel } from "./panels/ReviewPanel";
 import { TerminalPanel } from "./panels/TerminalPanel";
 
 const TABS: readonly { target: WorkPanelTarget; label: string; Icon: typeof FolderTree }[] = [
   { target: "files", label: "Files", Icon: FolderTree },
+  { target: "review", label: "Review", Icon: ListChecks },
   { target: "diff", label: "Diff", Icon: GitCompare },
   { target: "terminal", label: "Terminal", Icon: SquareTerminal },
   { target: "browser", label: "Browser", Icon: Globe },
@@ -147,6 +151,7 @@ export function WorkPanel(): React.JSX.Element {
 
         <div className="min-h-0 flex-1">
           {target === "files" ? <FilesPanel openRef={refs.files} /> : null}
+          {target === "review" ? <ReviewPanel /> : null}
           {target === "diff" ? <DiffPanel openRef={refs.diff} /> : null}
           {target === "terminal" ? <TerminalPanel /> : null}
           {target === "browser" ? <BrowserPanel openRef={refs.browser} /> : null}

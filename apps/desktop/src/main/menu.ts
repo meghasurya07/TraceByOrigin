@@ -17,9 +17,27 @@
 
 import { Menu, app, shell, type BrowserWindow, type MenuItemConstructorOptions } from "electron";
 
+import type { WorkPanelTarget } from "@trace/protocol";
+
 import { IPC, type UiCommand } from "../shared/ipc.js";
 
 const isMac = process.platform === "darwin";
+
+/**
+ * The work panel's targets, in the order they appear in the panel's tab strip.
+ *
+ * Typed as `WorkPanelTarget` rather than as strings, so adding a target to the protocol and
+ * forgetting it here is the only kind of mistake left: a wrong name will not compile.
+ */
+const WORK_PANELS: readonly { label: string; target: WorkPanelTarget }[] = [
+  { label: "Files", target: "files" },
+  { label: "Review", target: "review" },
+  { label: "Diff", target: "diff" },
+  { label: "Terminal", target: "terminal" },
+  { label: "Browser", target: "browser" },
+  { label: "Canvas", target: "canvas" },
+  { label: "Pull Request", target: "pr" },
+];
 
 export interface MenuOptions {
   /** Resolves the window a command should go to. Null when every window is closed. */
@@ -149,21 +167,14 @@ export function installApplicationMenu(options: MenuOptions): void {
         },
         {
           label: "Work Panel",
-          submenu: [
-            { label: "Files", accelerator: "CmdOrCtrl+1", target: "files" },
-            { label: "Diff", accelerator: "CmdOrCtrl+2", target: "diff" },
-            { label: "Canvas", accelerator: "CmdOrCtrl+3", target: "canvas" },
-            { label: "Pull Request", accelerator: "CmdOrCtrl+4", target: "pr" },
-            { label: "Browser", accelerator: "CmdOrCtrl+5", target: "browser" },
-            { label: "Terminal", accelerator: "CmdOrCtrl+6", target: "terminal" },
-          ].map(({ label, accelerator, target }): MenuItemConstructorOptions => ({
+          // The accelerator is the position, computed rather than written down, so the
+          // numbering cannot drift from the order. This list must stay in the same order as
+          // `WorkPanel.tsx`'s `TABS`: the number a user presses should match what they see
+          // left to right, and nothing but agreement between these two makes that true.
+          submenu: WORK_PANELS.map(({ label, target }, index): MenuItemConstructorOptions => ({
             label,
-            accelerator,
-            click: () =>
-              send({
-                kind: "open_work_panel",
-                target: target as "files" | "diff" | "canvas" | "pr" | "browser" | "terminal",
-              }),
+            accelerator: `CmdOrCtrl+${String(index + 1)}`,
+            click: () => send({ kind: "open_work_panel", target }),
           })),
         },
         { type: "separator" },

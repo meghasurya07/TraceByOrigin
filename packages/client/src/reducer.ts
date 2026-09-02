@@ -26,7 +26,7 @@ import type {
 } from "@trace/protocol";
 
 import type { AppState, ItemOf, SessionView, TranscriptItem, TranscriptItemKind } from "./types.js";
-import { DEFAULT_WORK_PANEL, TOOL_OUTPUT_CAP_CHARS } from "./types.js";
+import { DEFAULT_REVIEW, DEFAULT_WORK_PANEL, TOOL_OUTPUT_CAP_CHARS } from "./types.js";
 
 // ---------------------------------------------------------------------------
 // Identity
@@ -179,6 +179,7 @@ export function initialAppState(): AppState {
     models: [],
     providerKeys: [],
     workPanel: DEFAULT_WORK_PANEL,
+    review: DEFAULT_REVIEW,
     indexing: {},
     notices: [],
   };

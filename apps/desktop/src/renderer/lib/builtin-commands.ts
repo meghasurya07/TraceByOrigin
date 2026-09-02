@@ -56,7 +56,7 @@ export interface BuiltinCommandDeps {
  *
  * Authored order is meaningful: the menu keeps it for equally good matches, so this is the
  * list someone sees when they type `/` and nothing else. Sessions first, then the panels in
- * their `⌘1…⌘6` order, then settings, then the workspace.
+ * their `⌘1…⌘7` order, then settings, then the workspace.
  */
 export function builtinCommands(deps: BuiltinCommandDeps): BuiltinCommand[] {
   const commands: BuiltinCommand[] = [
@@ -71,10 +71,33 @@ export function builtinCommands(deps: BuiltinCommandDeps): BuiltinCommand[] {
       },
     },
     {
+      // Named for the verb, not the noun: `/diff` next door shows the same kind of thing
+      // and the only way to tell them apart is what you can do with what you are shown.
+      name: "review",
+      description: "Keep or undo what the agent changed",
+      run: () => {
+        deps.openWorkPanel("review");
+      },
+    },
+    {
       name: "diff",
-      description: "Review this session's changes",
+      description: "Compare the folder with git",
       run: () => {
         deps.openWorkPanel("diff");
+      },
+    },
+    {
+      name: "terminal",
+      description: "Open a terminal",
+      run: () => {
+        deps.openWorkPanel("terminal");
+      },
+    },
+    {
+      name: "browser",
+      description: "Open the browser",
+      run: () => {
+        deps.openWorkPanel("browser");
       },
     },
     {
@@ -89,20 +112,6 @@ export function builtinCommands(deps: BuiltinCommandDeps): BuiltinCommand[] {
       description: "Open the pull request panel",
       run: () => {
         deps.openWorkPanel("pr");
-      },
-    },
-    {
-      name: "browser",
-      description: "Open the browser",
-      run: () => {
-        deps.openWorkPanel("browser");
-      },
-    },
-    {
-      name: "terminal",
-      description: "Open a terminal",
-      run: () => {
-        deps.openWorkPanel("terminal");
       },
     },
 

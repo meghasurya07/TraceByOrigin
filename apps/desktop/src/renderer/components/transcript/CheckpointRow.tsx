@@ -12,7 +12,9 @@
  * user's edits on a mis-click is not recoverable from inside this app.
  *
  * This calls `checkpoint/restore` through the bridge rather than a store action, because
- * the store holds no checkpoint state — nothing to update, and the result is a notice.
+ * the store holds no checkpoint state. It does re-read the review list afterwards: a
+ * restore rewinds the work tree and drops the session's review baselines engine-side, so
+ * every row in that panel is describing a file that no longer looks like that.
  *
  * Copyright (c) 2026 Origin AI
  */
@@ -34,6 +36,7 @@ export const CheckpointRow = memo(function CheckpointRow(props: {
   const { item } = props;
   const sessionId = useStore((state) => state.activeSessionId);
   const pushNotice = useStore((state) => state.pushNotice);
+  const refreshReview = useStore((state) => state.refreshReview);
   const [phase, setPhase] = useState<Phase>("idle");
 
   // An armed confirmation disarms itself. A button that means something different from
@@ -62,6 +65,7 @@ export const CheckpointRow = memo(function CheckpointRow(props: {
               ? `Restored to “${item.label}” — nothing had changed since.`
               : `Restored ${String(count)} file${count === 1 ? "" : "s"} to “${item.label}”.`,
         });
+        void refreshReview();
       })
       .catch((error: unknown) => {
         pushNotice({

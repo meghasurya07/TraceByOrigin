@@ -36,6 +36,7 @@ import type {
   ProviderKeyStatus,
   RequestMethod,
   ResultOf,
+  ReviewFile,
   SessionSummary,
   StopReason,
   TodoItem,
@@ -404,6 +405,52 @@ export const DEFAULT_WORK_PANEL: WorkPanelState = {
 };
 
 // ---------------------------------------------------------------------------
+// Review
+// ---------------------------------------------------------------------------
+
+/**
+ * The agent's uncommitted work, as the user is being asked to judge it.
+ *
+ * Held at app level rather than inside the review panel, for one reason: two surfaces
+ * read it. The panel renders the hunks, and a bar in the chat column has to know whether
+ * there is anything to review at all — a feature nobody can find is a feature that isn't
+ * there. Two independent fetchers would double the git work and disagree about the count
+ * for as long as they were out of step.
+ *
+ * `sessionId` is what the rest of the fields describe, not the session that is currently
+ * selected. They differ for the moment between switching sessions and the next fetch
+ * landing, and a client that ignores the difference shows one session's changes over
+ * another's.
+ */
+export interface ReviewState {
+  sessionId: string | null;
+  files: ReviewFile[];
+  /** The shadow commit unaccepted paths are compared against. Null when there is none. */
+  baselineId: string | null;
+  /** More files differ than the engine will enumerate. */
+  truncated: boolean;
+  loading: boolean;
+  /**
+   * Paths with an accept or a revert in flight.
+   *
+   * A list rather than a single flag because accepting one file while reverting another
+   * is a normal thing to do quickly, and a shared flag would grey out both rows.
+   */
+  busy: string[];
+  error: string | null;
+}
+
+export const DEFAULT_REVIEW: ReviewState = {
+  sessionId: null,
+  files: [],
+  baselineId: null,
+  truncated: false,
+  loading: false,
+  busy: [],
+  error: null,
+};
+
+// ---------------------------------------------------------------------------
 // Notices
 // ---------------------------------------------------------------------------
 
@@ -461,6 +508,7 @@ export interface AppState {
   providerKeys: ProviderKeyStatus[];
 
   workPanel: WorkPanelState;
+  review: ReviewState;
   indexing: Record<string, IndexProgress>;
   notices: Notice[];
 }

@@ -1,9 +1,9 @@
 /**
  * The furniture every work-panel target shares.
  *
- * Extracted because six panels with six hand-rolled header rows drift within a week: one
- * gets a 6px gap, another a 8px one, and the tab strip above them stops looking like it
- * belongs to the thing below it. One bar, one empty state, one button.
+ * Extracted because a panel per target with a hand-rolled header row each drifts within a
+ * week: one gets a 6px gap, another an 8px one, and the tab strip above them stops looking
+ * like it belongs to the thing below it. One bar, one empty state, one button.
  *
  * Copyright (c) 2026 Origin AI
  */

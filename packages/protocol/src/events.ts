@@ -14,15 +14,24 @@
 import type { PermissionRequest, TodoItem, ToolName } from "./tools.js";
 
 /**
- * The six things Cursor 3.4's maximized panel can hold. We match the set
- * deliberately — it's a well-chosen decomposition of "what a coding agent produces
- * that a human needs to look at" — and the engine names a target when it has
- * something worth surfacing (a diff to review, a preview URL to open).
+ * What the maximized panel can hold.
+ *
+ * Six of these mirror Cursor 3.4's set, which we match deliberately — it is a
+ * well-chosen decomposition of "what a coding agent produces that a human needs to look
+ * at" — and the engine names a target when it has something worth surfacing (a diff to
+ * review, a preview URL to open).
+ *
+ * `review` is the seventh and ours. `diff` compares the work tree with the user's git;
+ * `review` compares it with the last thing the user approved in *this session*, which is
+ * a different question with a different answer and its own Keep/Undo verbs. Folding the
+ * two into one tab would mean one surface whose meaning changed depending on which
+ * button you pressed.
  *
  * The chat is the frame; this panel is the viewport. The editor is one option in
  * it, not the centre of the product.
  */
-export type WorkPanelTarget = "files" | "diff" | "canvas" | "pr" | "browser" | "terminal";
+export type WorkPanelTarget =
+  "files" | "review" | "diff" | "canvas" | "pr" | "browser" | "terminal";
 
 export type StopReason =
   | "end_turn"

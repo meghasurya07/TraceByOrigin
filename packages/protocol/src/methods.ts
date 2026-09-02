@@ -355,6 +355,19 @@ export interface ReviewHunk {
 }
 
 /**
+ * Which hunk a revert means.
+ *
+ * Named rather than inlined into `review/revert`'s params because a client passes it
+ * straight back from a `ReviewHunk` it rendered, and every layer between the button and
+ * the wire — a store action, a click handler — would otherwise restate the shape.
+ */
+export interface ReviewHunkRef {
+  index: number;
+  /** Exactly as `review/list` returned it. A mismatch is refused, not reverted. */
+  header: string;
+}
+
+/**
  * A file that differs from what the user last signed off on.
  *
  * `status` is relative to the baseline, not to the user's git: a file the agent created
@@ -467,7 +480,7 @@ export interface RequestMap {
       sessionId: string;
       path: string;
       /** Omit for the whole file. `header` must match what `review/list` returned. */
-      hunk?: { index: number; header: string };
+      hunk?: ReviewHunkRef;
     };
     result: { file: ReviewFile | null };
   };

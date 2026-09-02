@@ -36,6 +36,7 @@
 import { create } from "zustand";
 
 import {
+  DEFAULT_REVIEW,
   applyEvent,
   appendUserMessage,
   emptySessionView,
@@ -52,6 +53,7 @@ import type {
   CreateSessionParams,
   EngineSettings,
   PermissionDecision,
+  ReviewHunkRef,
   SessionSummary,
   WorkPanelTarget,
 } from "@trace/protocol";
@@ -118,6 +120,11 @@ export interface TraceStore extends AppState {
   setProviderKey: (provider: string, apiKey: string) => Promise<void>;
   deleteProviderKey: (provider: string) => Promise<void>;
 
+  // -- review
+  refreshReview: () => Promise<void>;
+  acceptReview: (paths?: string[]) => Promise<void>;
+  revertReview: (path: string, hunk?: ReviewHunkRef) => Promise<void>;
+
   // -- auth (host-owned; these are thin forwards)
   signIn: () => Promise<void>;
   cancelSignIn: () => Promise<void>;
@@ -156,6 +163,16 @@ function engine(): EngineClient {
 
 /** Notices need ids and nothing in the payload provides one. */
 let noticeSeq = 0;
+
+/**
+ * Which review listing is the current one.
+ *
+ * A review fetch runs after every completed turn *and* whenever the panel asks, so two
+ * can easily overlap — and the one that started first is not necessarily the one that
+ * resolves last. Every fetch takes a ticket; a resolution whose ticket is stale is
+ * dropped rather than allowed to overwrite a fresher list with an older one.
+ */
+let reviewSeq = 0;
 
 export const useStore = create<TraceStore>()((set, get) => {
   // -- helpers ---------------------------------------------------------------
@@ -245,6 +262,24 @@ export const useStore = create<TraceStore>()((set, get) => {
     }
   };
 
+  /**
+   * Flag paths as having an accept or a revert in flight.
+   *
+   * A set of paths rather than one panel-wide flag: keeping one file while undoing
+   * another is a normal thing to do in quick succession, and a shared flag would grey out
+   * both rows and hide which one the user is actually waiting on.
+   */
+  const markBusy = (paths: readonly string[], busy: boolean): void => {
+    set((state) => ({
+      review: {
+        ...state.review,
+        busy: busy
+          ? [...new Set([...state.review.busy, ...paths])]
+          : state.review.busy.filter((path) => !paths.includes(path)),
+      },
+    }));
+  };
+
   return {
     ...initialAppState(),
 
@@ -315,6 +350,11 @@ export const useStore = create<TraceStore>()((set, get) => {
             // Usage moved, so the account's spend did too. Cheap, and it keeps the
             // status bar's remaining-credit figure from going stale for an hour.
             void get().refreshAccount();
+            // The end of a turn is when there is something to review, and this is what
+            // puts the summoning bar on screen. Only for the foreground session: a
+            // background agent finishing must not repoint a review surface the user is
+            // reading, and its own changes will be listed when they switch to it.
+            if (event.sessionId === get().activeSessionId) void get().refreshReview();
             return;
           case "title_updated":
             set((state) => ({
@@ -463,6 +503,10 @@ export const useStore = create<TraceStore>()((set, get) => {
           },
           activeSessionId: summary.id,
         }));
+        // No `review/list` for a session with no turns behind it: it has no checkpoints,
+        // so the answer is empty and a round trip to hear it is one the click can feel.
+        set({ review: { ...DEFAULT_REVIEW, sessionId: summary.id } });
+        reviewSeq += 1;
         window.dispatchEvent(new CustomEvent("trace:focus-prompt"));
         return summary.id;
       } catch (cause) {
@@ -498,6 +542,11 @@ export const useStore = create<TraceStore>()((set, get) => {
               }
             : state.views,
       });
+
+      // Review is per session, so the previous session's list is now wrong on screen.
+      // Fired rather than awaited: it is a git read, and the transcript should not wait
+      // for it to swap.
+      void get().refreshReview();
 
       // Already loaded, or loading. Re-fetching would discard live items the engine
       // will never resend.
@@ -550,8 +599,12 @@ export const useStore = create<TraceStore>()((set, get) => {
 
       if (state.activeSessionId !== sessionId) return;
       const next = remaining[0];
-      if (next === undefined) set({ activeSessionId: null });
-      else await get().selectSession(next.id);
+      // `refreshReview` on the empty case rather than clearing the slice by hand: it is
+      // also what cancels a listing still in flight for the session just deleted.
+      if (next === undefined) {
+        set({ activeSessionId: null });
+        await get().refreshReview();
+      } else await get().selectSession(next.id);
     },
 
     // ---- the turn ---------------------------------------------------------
@@ -664,6 +717,144 @@ export const useStore = create<TraceStore>()((set, get) => {
         }));
       } catch (cause) {
         report(cause, "Could not remove the key");
+      }
+    },
+
+    // ---- review -----------------------------------------------------------
+
+    /**
+     * Re-read what the active session has changed and not had approved.
+     *
+     * Called on every completed turn and whenever the panel asks, which is why it takes a
+     * ticket from {@link reviewSeq}: the fetch behind it does a git write and a read per
+     * changed file, so two overlapping calls can resolve out of order.
+     *
+     * A failure lands in `review.error` rather than in a notice. The panel has somewhere
+     * to put it, and a banner across the window for "the diff could not be listed" is out
+     * of proportion to a surface the user may not even have open.
+     */
+    refreshReview: async () => {
+      reviewSeq += 1;
+      const seq = reviewSeq;
+      const sessionId = get().activeSessionId;
+      if (sessionId === null) {
+        set({ review: DEFAULT_REVIEW });
+        return;
+      }
+
+      set((state) => ({
+        review:
+          // A refresh for a *different* session than the one on screen drops the rows as it
+          // starts, rather than leaving them up until the fetch lands. They describe another
+          // conversation's files, and a Keep click on one of them in that window would be
+          // aimed at a row the user believes belongs to the session they just opened.
+          //
+          // `sessionId` moves now rather than on the reply, so the slice reads as "this
+          // session, nothing known yet" instead of "no session". A panel watching for a
+          // mismatch to trigger its first fetch would otherwise see one and ask again.
+          state.review.sessionId === sessionId
+            ? { ...state.review, loading: true, error: null }
+            : { ...DEFAULT_REVIEW, sessionId, loading: true },
+      }));
+      try {
+        const result = await engine().request("review/list", { sessionId });
+        if (seq !== reviewSeq) return;
+        set((state) => ({
+          review: {
+            ...state.review,
+            sessionId,
+            files: result.files,
+            baselineId: result.baselineId,
+            truncated: result.truncated,
+            loading: false,
+            error: null,
+          },
+        }));
+      } catch (cause) {
+        if (seq !== reviewSeq) return;
+        set((state) => ({
+          review: {
+            ...state.review,
+            loading: false,
+            error: cause instanceof Error ? cause.message : String(cause),
+          },
+        }));
+      }
+    },
+
+    /**
+     * Keep changes: their current contents become what they are next compared against.
+     *
+     * `paths` is forwarded only when the caller named some. Omitting it lets the engine
+     * resolve "everything" against its own listing, which is what keeps Keep All from
+     * racing a refresh — a file that changed in between is either in that listing and
+     * accepted as it now stands, or in the next one.
+     */
+    acceptReview: async (paths) => {
+      const sessionId = get().activeSessionId;
+      if (sessionId === null) return;
+      const marked = paths ?? get().review.files.map((file) => file.path);
+      if (marked.length === 0) return;
+
+      markBusy(marked, true);
+      try {
+        const { accepted } = await engine().request("review/accept", {
+          sessionId,
+          ...(paths === undefined ? {} : { paths }),
+        });
+        // Dropped from the list here rather than waiting for the re-fetch, so the row goes
+        // when the click lands instead of a git round trip later. Only on success: showing
+        // a file as kept and then bringing it back would be worse than a moment's delay.
+        set((state) => ({
+          review: {
+            ...state.review,
+            files: state.review.files.filter((file) => !accepted.includes(file.path)),
+          },
+        }));
+      } catch (cause) {
+        report(cause, "Could not keep those changes");
+      } finally {
+        markBusy(marked, false);
+      }
+      // The baseline moved, so anything still listed is now measured against a newer
+      // commit — including files that were only partly reverted.
+      await get().refreshReview();
+    },
+
+    /**
+     * Undo a file, or one hunk of it, back to its baseline.
+     *
+     * The result is spliced in rather than triggering a re-list, because `review/revert`
+     * returns the path's remaining state precisely so that a client does not have to
+     * re-run the whole diff to find out what one file now looks like.
+     */
+    revertReview: async (path, hunk) => {
+      const sessionId = get().activeSessionId;
+      if (sessionId === null) return;
+
+      markBusy([path], true);
+      try {
+        const { file } = await engine().request("review/revert", {
+          sessionId,
+          path,
+          ...(hunk === undefined ? {} : { hunk }),
+        });
+        set((state) => ({
+          review: {
+            ...state.review,
+            files:
+              file === null
+                ? state.review.files.filter((entry) => entry.path !== path)
+                : state.review.files.map((entry) => (entry.path === path ? file : entry)),
+          },
+        }));
+      } catch (cause) {
+        report(cause, "Could not undo that");
+        // The commonest failure here is a hunk the engine refused because the file moved
+        // under the listing. A fresh listing is both the explanation and the remedy.
+        await get().refreshReview();
+      } finally {
+        markBusy([path], false);
       }
     },
 

@@ -105,3 +105,22 @@ export function baseName(path: string): string {
 export function formatDiffStat(added: number, removed: number): string {
   return `+${String(added)} −${String(removed)}`;
 }
+
+/**
+ * The same stat for a whole list of files.
+ *
+ * Structurally typed rather than taking `ReviewFile`, which keeps this module free of
+ * protocol imports — it is the one file in the renderer that nothing else depends on, and
+ * that is worth preserving. It exists at all because the review panel and the bar above the
+ * prompt both state this figure, and a fold written twice is a fold that will disagree with
+ * itself the first time one of them starts counting something the other does not.
+ */
+export function formatReviewStat(files: readonly { added: number; removed: number }[]): string {
+  let added = 0;
+  let removed = 0;
+  for (const file of files) {
+    added += file.added;
+    removed += file.removed;
+  }
+  return formatDiffStat(added, removed);
+}

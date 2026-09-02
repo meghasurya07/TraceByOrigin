@@ -106,6 +106,7 @@ export type {
   GitStatusResult,
   ReviewFile,
   ReviewHunk,
+  ReviewHunkRef,
   EngineSettings,
   SetProviderKeyParams,
   ProviderKeyStatus,

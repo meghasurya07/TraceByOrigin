@@ -19,6 +19,7 @@ import { useEffect } from "react";
 import { EngineBanner } from "./components/EngineBanner";
 import { NoticeBar } from "./components/NoticeBar";
 import { PromptBar } from "./components/PromptBar";
+import { ReviewBar } from "./components/ReviewBar";
 import { SessionSearch } from "./components/SessionSearch";
 import { SessionSidebar } from "./components/SessionSidebar";
 import { SettingsDialog } from "./components/SettingsDialog";
@@ -63,6 +64,9 @@ export function App(): React.JSX.Element {
                 screen — flex items default to `min-width: auto`. */}
             <div className="flex min-w-0 flex-1 flex-col">
               <Transcript />
+              {/* Between the transcript and the prompt on purpose: the agent has just
+                  finished, and this is the last thing in the way of typing again. */}
+              <ReviewBar />
               <PromptBar />
             </div>
 
