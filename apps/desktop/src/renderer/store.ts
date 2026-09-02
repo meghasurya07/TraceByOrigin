@@ -56,7 +56,7 @@ import type {
   WorkPanelTarget,
 } from "@trace/protocol";
 
-import type { HostInfo, UiCommand, WindowStatePayload } from "../shared/ipc";
+import type { HostInfo, SettingsSection, UiCommand, WindowStatePayload } from "../shared/ipc";
 import { TraceRequestError } from "../shared/ipc";
 import { bridge } from "./lib/bridge";
 import { BridgeEngineClient } from "./lib/engine-client";
@@ -80,7 +80,7 @@ export interface HostState {
   /** Set while a `session/prompt` is in flight, before `turn_started` lands. */
   sending: boolean;
   /** Which settings section the dialog is on, or null when it is closed. */
-  settingsSection: "account" | "models" | "permissions" | "advanced" | null;
+  settingsSection: SettingsSection | null;
   /** Open state of the ⌘P session switcher. */
   searchOpen: boolean;
 }
@@ -130,7 +130,7 @@ export interface TraceStore extends AppState {
   toggleWorkPanel: () => void;
   openWorkPanel: (target: WorkPanelTarget, ref?: string) => void;
   closeWorkPanel: () => void;
-  openSettings: (section?: HostState["settingsSection"]) => void;
+  openSettings: (section?: SettingsSection) => void;
   closeSettings: () => void;
   setSearchOpen: (open: boolean) => void;
 

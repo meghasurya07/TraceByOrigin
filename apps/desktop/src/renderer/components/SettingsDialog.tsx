@@ -1,15 +1,21 @@
 /**
  * Settings.
  *
- * Four sections, and the split is by *what the user came here to change*, not by which
+ * Five sections, and the split is by *what the user came here to change*, not by which
  * process owns the value: Account (who you are and what it costs), Models (which brain
- * and whose key), Permissions (what it may do without asking), Advanced (everything that
- * is a number, a path, or a version string).
+ * and whose key), Rules (what the agent is told before you say anything), Permissions
+ * (what it may do without asking), Advanced (everything that is a number, a path, or a
+ * version string).
  *
  * Every control writes immediately. There is no Save button and no dirty state, because a
  * settings dialog with an unsaved buffer has to answer "what happens if I close it?" and
  * every possible answer is bad. `settings/update` is a merge patch, so a write here is a
  * one-field statement and never clobbers a field this dialog does not render.
+ *
+ * Rules are the exception, and deliberately read-only: they are files on disk, discovered
+ * rather than configured, so the honest thing for this dialog to offer is "here is what is
+ * in effect, and here is the file" — not an editor that would be a worse one than the
+ * user's.
  *
  * The dialog is not the owner of any of this — `host.settingsSection` is, which is why
  * `openSettings("models")` from a blocked model row lands on the right page. That link
@@ -24,17 +30,22 @@ import { Dialog } from "radix-ui";
 import {
   Boxes,
   Check,
+  ChevronDown,
+  ChevronRight,
   CircleAlert,
   ExternalLink,
   Eye,
   EyeOff,
+  FileText,
   FolderOpen,
+  Globe,
   KeyRound,
   LoaderCircle,
   LogOut,
   Plus,
   RefreshCw,
   RotateCcw,
+  ScrollText,
   ShieldCheck,
   SlidersHorizontal,
   Sparkles,
@@ -48,13 +59,15 @@ import type {
   ModelInfo,
   PermissionRule,
   ProviderKeyStatus,
+  RuleActivation,
+  RuleSummary,
   ToolName,
 } from "@trace/protocol";
 import { TOOL_NAMES } from "@trace/protocol";
 import type { Plan } from "@trace/client";
 import { accessFor, modelsByProvider, PROVIDER_LABELS, PROVIDER_ORDER } from "@trace/client";
 
-import type { HostState } from "../store";
+import type { SettingsSection } from "../../shared/ipc";
 import { bridge } from "../lib/bridge";
 import { cn } from "../lib/cn";
 import { formatCents, formatContext, formatRelative } from "../lib/format";
@@ -62,11 +75,12 @@ import { hintFor } from "../lib/model-hints";
 import { PERMISSION_MODES } from "../lib/modes";
 import { useStore } from "../store";
 
-type Section = NonNullable<HostState["settingsSection"]>;
+type Section = SettingsSection;
 
 const SECTIONS: readonly { id: Section; label: string; Icon: typeof User }[] = [
   { id: "account", label: "Account", Icon: User },
   { id: "models", label: "Models", Icon: Boxes },
+  { id: "rules", label: "Rules", Icon: ScrollText },
   { id: "permissions", label: "Permissions", Icon: ShieldCheck },
   { id: "advanced", label: "Advanced", Icon: SlidersHorizontal },
 ];
@@ -116,6 +130,7 @@ export function SettingsDialog(): React.JSX.Element {
           <div className="min-w-0 flex-1 overflow-y-auto p-5">
             {section === "account" ? <AccountSection /> : null}
             {section === "models" ? <ModelsSection /> : null}
+            {section === "rules" ? <RulesSection /> : null}
             {section === "permissions" ? <PermissionsSection /> : null}
             {section === "advanced" ? <AdvancedSection /> : null}
           </div>
@@ -721,6 +736,290 @@ function KeyRow(props: { provider: string; status?: ProviderKeyStatus }): React.
         Save
       </button>
     </Row>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Rules
+// ---------------------------------------------------------------------------
+
+/**
+ * What each activation means, in the second person.
+ *
+ * The engine *derives* activation from a rule's frontmatter rather than reading it as a
+ * declaration, so these are consequences, not settings — which is why this list is a
+ * legend and there is no picker beside it.
+ */
+const ACTIVATION_HINT: Readonly<Record<RuleActivation, string>> = {
+  always: "In the system prompt on every turn.",
+  auto: "Added when a file matching its globs enters the turn.",
+  agent: "Offered by name and description; the agent fetches it when it looks relevant.",
+  manual: "Inert until something names it.",
+};
+
+/** Ordered by how much of the context window the activation costs, loudest first. */
+const ACTIVATION_TINT: Readonly<Record<RuleActivation, string>> = {
+  always: "border-accent-fg/40 text-accent-fg",
+  auto: "border-success/40 text-success",
+  agent: "border-line-strong text-fg-muted",
+  manual: "border-line text-fg-subtle",
+};
+
+const SOURCE_LABEL: Readonly<Record<RuleSummary["source"], string>> = {
+  workspace: "This folder",
+  user: "All folders",
+  agents: "AGENTS.md",
+};
+
+const SOURCE_HINT: Readonly<Record<RuleSummary["source"], string>> = {
+  workspace: "From `.trace/rules` in the open folder. Travels with the repository.",
+  user: "From `~/.trace/rules`. Applies wherever you work.",
+  agents:
+    "A repository's `AGENTS.md`, the convention several agents read. Trace treats it as an always-on rule unless its frontmatter says `alwaysApply: false`.",
+};
+
+/**
+ * Prompt order, not most-specific-first.
+ *
+ * This is the order the engine hands them over, which is the order they are concatenated
+ * into the system prompt — and later text carries more weight with the model. Sorting this
+ * list by anything more flattering would be a lie about how it behaves, the same reason the
+ * permission rules below are shown in evaluation order.
+ */
+const SOURCE_ORDER: readonly RuleSummary["source"][] = ["user", "agents", "workspace"];
+
+/**
+ * The standing instructions, read-only.
+ *
+ * Read-only is the decision worth defending. Rules are markdown files the user already
+ * owns, in a directory they chose to create, and the useful thing a settings dialog can do
+ * with them is answer the question they are actually opened to answer: *which of these is
+ * in effect right now, and why?* An editor here would be a worse editor than the one the
+ * user has open in the next window, and a "delete" button would be a destructive action
+ * offered for a file this dialog did not create.
+ *
+ * The list comes from the same `discoverRules` the agent's own loader calls, so this cannot
+ * drift from what the model is being told — which is the whole point of showing it. When a
+ * rule looks like it is not working, the first thing to check is whether the engine sees it
+ * at all, and the second is which activation it derived.
+ */
+function RulesSection(): React.JSX.Element {
+  const workspaces = useStore((state) => state.workspaces);
+  const activeWorkspaceId = useStore((state) => state.activeWorkspaceId);
+  const workspace = workspaces.find((entry) => entry.id === activeWorkspaceId);
+
+  const [rules, setRules] = useState<RuleSummary[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [nonce, setNonce] = useState(0);
+
+  // Scoped to the open folder when there is one, so a `.trace/rules` from some other
+  // repository in the sidebar cannot appear to be in effect here. With no folder open the
+  // engine returns the user-global set, which is exactly what applies.
+  useEffect(() => {
+    let live = true;
+    const params = workspace === undefined ? {} : { workspaceId: workspace.id };
+    void bridge.request("rules/list", params).then(
+      (result) => {
+        if (!live) return;
+        setRules(result.rules);
+        setError(null);
+      },
+      (cause: unknown) => {
+        if (!live) return;
+        setRules([]);
+        setError(cause instanceof Error ? cause.message : String(cause));
+      },
+    );
+    return () => {
+      live = false;
+    };
+  }, [workspace?.id, nonce]);
+
+  if (rules === null && error === null) {
+    return (
+      <p className="flex items-center gap-2 text-2xs text-fg-subtle">
+        <LoaderCircle size={11} className="animate-spin" />
+        Looking for rules…
+      </p>
+    );
+  }
+
+  const found = rules ?? [];
+  const always = found.filter((rule) => rule.activation === "always").length;
+
+  return (
+    <>
+      <Group
+        title="Rules"
+        hint="Markdown files the agent is given before you say anything. Trace reads `.trace/rules` in the open folder, `~/.trace/rules` for every folder, and a repository's `AGENTS.md`."
+      >
+        <div className="mb-3 flex items-center gap-2">
+          <span className="min-w-0 flex-1 truncate text-2xs text-fg-subtle">
+            {workspace === undefined
+              ? "No folder is open, so only your global rules apply."
+              : `In effect for ${workspace.name}${
+                  always === 0 ? "" : ` · ${String(always)} on every turn`
+                }`}
+          </span>
+          <button
+            type="button"
+            className={BUTTON}
+            onClick={() => {
+              setRules(null);
+              setNonce((value) => value + 1);
+            }}
+          >
+            <RefreshCw size={10} />
+            Rescan
+          </button>
+        </div>
+
+        {error !== null ? (
+          <p className="flex items-start gap-1.5 text-2xs leading-relaxed text-danger">
+            <CircleAlert size={11} className="mt-0.5 shrink-0" />
+            {error}
+          </p>
+        ) : found.length === 0 ? (
+          <EmptyRules hasWorkspace={workspace !== undefined} />
+        ) : (
+          SOURCE_ORDER.map((source) => {
+            const group = found.filter((rule) => rule.source === source);
+            if (group.length === 0) return null;
+            return (
+              <div key={source} className="mb-4 last:mb-0">
+                <p className="flex items-center gap-1.5 text-2xs font-medium text-fg-muted">
+                  {source === "user" ? <Globe size={10} /> : <FolderOpen size={10} />}
+                  {SOURCE_LABEL[source]}
+                </p>
+                <p className="mt-0.5 mb-1.5 text-2xs leading-relaxed text-fg-subtle">
+                  {SOURCE_HINT[source]}
+                </p>
+                <ul>
+                  {group.map((rule) => (
+                    <RuleCard key={`${rule.source}:${rule.path}`} rule={rule} />
+                  ))}
+                </ul>
+              </div>
+            );
+          })
+        )}
+      </Group>
+
+      <Group title="What the activations mean">
+        <dl className="grid grid-cols-[5rem_1fr] gap-x-3 gap-y-1.5 text-2xs">
+          {(Object.keys(ACTIVATION_HINT) as RuleActivation[]).map((activation) => (
+            <div key={activation} className="contents">
+              <dt>
+                <Badge activation={activation} />
+              </dt>
+              <dd className="leading-relaxed text-fg-subtle">{ACTIVATION_HINT[activation]}</dd>
+            </div>
+          ))}
+        </dl>
+        <p className="mt-3 text-2xs leading-relaxed text-fg-subtle">
+          Activation is derived from a rule&rsquo;s frontmatter, not chosen: `alwaysApply: true`
+          makes it always, `globs` make it auto, a `description` alone makes it agent-fetched, and a
+          file with none of those is manual. That is why this list is read-only — the file is the
+          setting.
+        </p>
+        <p className="mt-2 text-2xs leading-relaxed text-fg-subtle">
+          The groups above are in the order they reach the model, and later text carries more
+          weight. A folder&rsquo;s rule also replaces a global one of the same name outright, rather
+          than stacking with it — so a global rule that has gone missing from this list is usually
+          one the open folder has its own version of.
+        </p>
+      </Group>
+    </>
+  );
+}
+
+function EmptyRules(props: { hasWorkspace: boolean }): React.JSX.Element {
+  return (
+    <div className="rounded border border-line bg-surface p-3">
+      <p className="text-2xs text-fg-muted">No rules yet.</p>
+      <p className="mt-1 text-2xs leading-relaxed text-fg-subtle">
+        {props.hasWorkspace
+          ? "Create `.trace/rules/testing.md` in this folder and the agent will pick it up on the next turn. A rule is a markdown file: optional YAML frontmatter, then the instruction."
+          : "Open a folder to give it rules of its own, or create `~/.trace/rules/style.md` for something that should apply everywhere."}
+      </p>
+    </div>
+  );
+}
+
+/**
+ * One rule: what it is called, when it fires, and — on demand — what it says.
+ *
+ * The body is collapsed because the list is for comparing rules and the body is for reading
+ * one. It ships with the summary already (`RuleSummary.body`), so expanding costs no
+ * request and cannot fail.
+ */
+function RuleCard(props: { rule: RuleSummary }): React.JSX.Element {
+  const { rule } = props;
+  const [open, setOpen] = useState(false);
+
+  return (
+    <li className="border-b border-line py-2 last:border-b-0">
+      <div className="flex items-start gap-2">
+        <button
+          type="button"
+          onClick={() => {
+            setOpen(!open);
+          }}
+          aria-expanded={open}
+          className="mt-0.5 flex size-4 shrink-0 items-center justify-center rounded text-fg-subtle transition-colors hover:bg-surface-hover hover:text-fg"
+        >
+          {open ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
+        </button>
+
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-1.5">
+            <span className="selectable truncate font-mono text-xs text-fg">{rule.name}</span>
+            <Badge activation={rule.activation} />
+          </div>
+          <p className="selectable mt-0.5 text-2xs leading-relaxed text-fg-subtle">
+            {rule.description === "" ? "No description." : rule.description}
+          </p>
+          {rule.globs.length === 0 ? null : (
+            <p className="selectable mt-1 truncate font-mono text-2xs text-fg-muted">
+              {rule.globs.join(" · ")}
+            </p>
+          )}
+          {open ? (
+            <pre className="selectable mt-1.5 max-h-64 overflow-auto rounded border border-line bg-surface p-2 font-mono text-2xs leading-relaxed whitespace-pre-wrap text-fg-muted">
+              {rule.body === "" ? "This file is empty." : rule.body}
+            </pre>
+          ) : null}
+        </div>
+
+        <button
+          type="button"
+          title={`Show ${rule.path} in the file manager`}
+          aria-label="Reveal this rule's file"
+          onClick={() => {
+            void bridge.revealPath(rule.path).catch(() => {
+              // Nothing to say. The full path is already in this button's tooltip, so a
+              // failed reveal costs the user the shortcut, not the information.
+            });
+          }}
+          className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded text-fg-subtle transition-colors hover:bg-surface-hover hover:text-fg"
+        >
+          <FileText size={10} />
+        </button>
+      </div>
+    </li>
+  );
+}
+
+function Badge(props: { activation: RuleActivation }): React.JSX.Element {
+  return (
+    <span
+      className={cn(
+        "shrink-0 rounded border px-1 py-px text-2xs font-medium",
+        ACTIVATION_TINT[props.activation],
+      )}
+    >
+      {props.activation}
+    </span>
   );
 }
 

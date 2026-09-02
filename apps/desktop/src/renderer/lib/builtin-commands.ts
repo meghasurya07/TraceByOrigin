@@ -21,6 +21,8 @@
 
 import type { WorkPanelTarget } from "@trace/protocol";
 
+import type { SettingsSection } from "../../shared/ipc";
+
 export interface BuiltinCommand {
   /** Without the leading slash, so it compares directly with `PromptCommand.name`. */
   name: string;
@@ -38,7 +40,7 @@ export interface BuiltinCommandDeps {
   newSession: () => void;
   findSession: () => void;
   openWorkPanel: (target: WorkPanelTarget) => void;
-  openSettings: (section?: "account" | "models" | "permissions" | "advanced") => void;
+  openSettings: (section?: SettingsSection) => void;
   openWorkspace: () => void;
   /**
    * Null when no folder is open.
@@ -109,6 +111,13 @@ export function builtinCommands(deps: BuiltinCommandDeps): BuiltinCommand[] {
       description: "Choose the model",
       run: () => {
         deps.openSettings("models");
+      },
+    },
+    {
+      name: "rules",
+      description: "See the standing instructions in effect",
+      run: () => {
+        deps.openSettings("rules");
       },
     },
     {

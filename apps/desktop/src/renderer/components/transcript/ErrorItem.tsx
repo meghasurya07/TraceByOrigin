@@ -21,6 +21,7 @@ import { CircleAlert, TriangleAlert } from "lucide-react";
 import { ErrorCode } from "@trace/protocol";
 import type { ItemOf } from "@trace/client";
 
+import type { SettingsSection } from "../../../shared/ipc";
 import { cn } from "../../lib/cn";
 import { useStore } from "../../store";
 import { formatDuration } from "../../lib/format";
@@ -88,7 +89,7 @@ export const ErrorItem = memo(function ErrorItem(props: {
  */
 function Remedy(props: {
   code: number;
-  onSettings: (section: "account" | "models" | "permissions" | "advanced") => void;
+  onSettings: (section: SettingsSection) => void;
   onRestart: () => void;
   onNewSession: () => void;
 }): React.JSX.Element | null {

@@ -40,6 +40,7 @@ import type { EngineHost } from "./engine-host.js";
 export interface IpcContext {
   engine: EngineHost;
   auth: AuthController;
+  /** `~/.trace`. The engine's `--home`, and revealable like a workspace root. */
   homeDir: string;
   /** Current roots, for `revealPath`'s containment check. */
   workspaceRoots: () => readonly string[];
@@ -139,7 +140,13 @@ export function registerIpc(context: IpcContext): void {
 
   handle(IPC.hostRevealPath, async (_event, params: { path: string }) => {
     const target = path.resolve(params.path);
-    if (!isInsideAnyRoot(target, context.workspaceRoots())) {
+    // Trace's own home is revealable alongside the workspaces. The check exists to stop the
+    // renderer becoming an arbitrary-path file explorer for whatever an LLM printed, not to
+    // hide the user's own config from them — and a user-global rule or a session log lives
+    // in `~/.trace`, inside no workspace at all. "Reveal this rule" has to work for those,
+    // and so did the button in Advanced that reveals the home directory itself: it was
+    // rejected here and, having no `catch`, failed as an unhandled rejection.
+    if (!isInsideAnyRoot(target, [...context.workspaceRoots(), context.homeDir])) {
       context.onLog?.(`[ipc] refused to reveal a path outside every workspace`);
       throw new RpcError(
         ErrorCode.PathOutsideWorkspace,

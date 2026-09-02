@@ -157,6 +157,17 @@ export interface WindowStatePayload {
 }
 
 /**
+ * Which page of Settings a surface is asking for.
+ *
+ * Declared once and imported by the four places that name a section — the menu command
+ * below, the store's `settingsSection`, the command palette, and the transcript's error
+ * remedies. Each of those held its own copy of this union, so adding a page meant editing
+ * five files and nothing would have complained if one had been missed: the miss shows up as
+ * a menu item that opens Settings on the wrong page.
+ */
+export type SettingsSection = "account" | "models" | "rules" | "permissions" | "advanced";
+
+/**
  * Menu and accelerator actions, pushed from main.
  *
  * The native menu lives in main because that is where `Menu.setApplicationMenu` is,
@@ -171,7 +182,7 @@ export type UiCommand =
   | { kind: "toggle_sidebar" }
   | { kind: "toggle_work_panel" }
   | { kind: "open_work_panel"; target: "files" | "diff" | "canvas" | "pr" | "browser" | "terminal" }
-  | { kind: "open_settings"; section?: "account" | "models" | "permissions" | "advanced" }
+  | { kind: "open_settings"; section?: SettingsSection }
   | { kind: "open_session_search" }
   | { kind: "interrupt_turn" }
   /** From a `trace://` deep link that named a session. */
